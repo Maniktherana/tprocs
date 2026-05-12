@@ -1,86 +1,87 @@
 import type { ProcView } from "../services/process-manager";
-import type { Terminal } from "../terminal";
+import type { Cell, Terminal } from "../terminal";
 
-// Pane-local (row,col): row 0 is the top of the visible window. Depending on
-// `view.viewOffset` that may map into scrollback or the live viewport.
-export const cellAt = (
+// A `lineId` is "absolute row from the top of all currently-held content"
+// (scrollback first, then viewport). It is stable across (a) live output that
+// pushes the viewport into scrollback and (b) the user's view scrolling — the
+// content under a given lineId stays the same until the ring buffer drops it.
+//
+//   lineId in [0, scrollbackCount)            → scrollback line
+//   lineId in [scrollbackCount, sb + rows)    → viewport row (lineId - sb)
+
+export type AbsPoint = { readonly lineId: number; readonly col: number };
+export type AbsSelection = { readonly anchor: AbsPoint; readonly focus: AbsPoint };
+
+export const viewportRowToLineId = (
   term: Terminal,
   view: ProcView,
   visibleRows: number,
   row: number,
-  col: number,
-): { char: number } => {
+): number => {
   const sb = term.scrollbackCount;
   const total = sb + term.rows;
   const top = Math.max(0, total - visibleRows - view.viewOffset);
-  const logical = top + row;
-  if (logical < 0 || logical >= total) return { char: 32 };
-  if (logical < sb)
-    return { char: term.scrollbackCell(sb - 1 - logical, col).char };
-  return { char: term.cell(logical - sb, col).char };
+  return top + row;
 };
 
-export type SelectionRect = {
-  readonly startRow: number;
-  readonly startCol: number;
-  readonly endRow: number;
-  readonly endCol: number;
+const lineCellsByLineId = (term: Terminal, lineId: number): readonly Cell[] => {
+  const sb = term.scrollbackCount;
+  if (lineId < 0) return [];
+  if (lineId < sb) return term.scrollbackLine(sb - 1 - lineId);
+  const vpRow = lineId - sb;
+  if (vpRow < 0 || vpRow >= term.rows) return [];
+  return term.viewport()[vpRow] ?? [];
 };
 
-export const normaliseRect = (r: SelectionRect): SelectionRect => {
-  const [r0, r1] =
-    r.startRow <= r.endRow ? [r.startRow, r.endRow] : [r.endRow, r.startRow];
-  const flipped = r.startRow > r.endRow;
-  const [c0, c1] = flipped
-    ? [r.endCol, r.startCol]
-    : [r.startCol, r.endCol];
-  return { startRow: r0, startCol: c0, endRow: r1, endCol: c1 };
+// Order anchor/focus into document order (start <= end). Inclusive bounds.
+const order = (sel: AbsSelection): { start: AbsPoint; end: AbsPoint } => {
+  const a = sel.anchor;
+  const f = sel.focus;
+  if (a.lineId !== f.lineId) {
+    return a.lineId < f.lineId ? { start: a, end: f } : { start: f, end: a };
+  }
+  return a.col <= f.col ? { start: a, end: f } : { start: f, end: a };
 };
 
-// Half-open `[start, end)` column range to highlight on `row` for a
-// stream-style selection. Returns null if the row is outside the selection.
-export const highlightRangeForRow = (
-  rect: SelectionRect,
-  row: number,
+// Half-open `[start, end)` column range to inverse-highlight on `lineId`.
+// Returns null if the line is outside the selection.
+export const highlightRangeForLineId = (
+  sel: AbsSelection,
+  lineId: number,
   visibleCols: number,
 ): { start: number; end: number } | null => {
-  const n = normaliseRect(rect);
-  if (row < n.startRow || row > n.endRow) return null;
-  if (n.startRow === n.endRow) {
-    const a = Math.min(n.startCol, n.endCol);
-    const b = Math.max(n.startCol, n.endCol);
-    return { start: a, end: b + 1 };
-  }
-  if (row === n.startRow) return { start: n.startCol, end: visibleCols };
-  if (row === n.endRow) return { start: 0, end: n.endCol + 1 };
+  const { start, end } = order(sel);
+  if (lineId < start.lineId || lineId > end.lineId) return null;
+  if (start.lineId === end.lineId)
+    return { start: start.col, end: end.col + 1 };
+  if (lineId === start.lineId) return { start: start.col, end: visibleCols };
+  if (lineId === end.lineId) return { start: 0, end: end.col + 1 };
   return { start: 0, end: visibleCols };
 };
 
 const charOf = (n: number): string => String.fromCodePoint(n === 0 ? 32 : n);
 
-// Stream-style: first row from startCol to EOL, middle rows full width, last
-// row up to and including endCol. Trailing spaces trimmed per row. NB: coords
-// are viewport rows; dragging while scrolling currently follows viewport rows
-// rather than logical lines (deferred).
-export const extractSelectionText = (
+// Walk lineIds in order. Each line's slice is independent of viewport state at
+// release time — we look up actual content by lineId, so scrolling mid-drag
+// never affects what gets copied.
+export const extractAbsSelectionText = (
   term: Terminal,
-  view: ProcView,
-  rect: SelectionRect,
-  visibleRows: number,
+  sel: AbsSelection,
   visibleCols: number,
 ): string => {
-  const n = normaliseRect(rect);
-  if (n.startRow === n.endRow && n.startCol === n.endCol) return "";
+  const { start, end } = order(sel);
+  if (start.lineId === end.lineId && start.col === end.col) return "";
 
   const rows: string[] = [];
-  for (let r = n.startRow; r <= n.endRow; r++) {
-    const startCol = r === n.startRow ? n.startCol : 0;
-    const endCol = r === n.endRow ? n.endCol : visibleCols - 1;
-    const chars: string[] = [];
+  for (let id = start.lineId; id <= end.lineId; id++) {
+    const cells = lineCellsByLineId(term, id);
+    const startCol = id === start.lineId ? start.col : 0;
+    const endCol = id === end.lineId ? end.col : Math.max(visibleCols, cells.length) - 1;
+    const text: string[] = [];
     for (let c = startCol; c <= endCol; c++) {
-      chars.push(charOf(cellAt(term, view, visibleRows, r, c).char));
+      text.push(charOf(cells[c]?.char ?? 32));
     }
-    rows.push(chars.join("").replace(/\s+$/u, ""));
+    rows.push(text.join("").replace(/\s+$/u, ""));
   }
   return rows.join("\n");
 };

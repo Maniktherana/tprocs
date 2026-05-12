@@ -1,7 +1,12 @@
 import type { BoxRenderable, MouseEvent } from "@opentui/core";
 import { Effect } from "effect";
 import { useEffect, useRef, useState } from "react";
-import { extractSelectionText, type SelectionRect } from "./lookup";
+import {
+  extractAbsSelectionText,
+  viewportRowToLineId,
+  type AbsPoint,
+  type AbsSelection,
+} from "./lookup";
 import { encodeSgrMouse } from "./mouse-encode";
 import { ScreenView } from "./screen-view";
 import { useRenderTick, useServices } from "./services-context";
@@ -12,9 +17,13 @@ type Point = { row: number; col: number };
 const clamp = (n: number, lo: number, hi: number): number =>
   n < lo ? lo : n > hi ? hi : n;
 
-// 1 cell out -> 120ms tick; 10+ cells -> 30ms.
-const autoScrollTick = (distance: number): number =>
-  clamp(140 - distance * 12, 30, 200);
+// Auto-scroll feel: distance is "cells past the edge". Tick interval shrinks
+// and lines-per-tick grows as the pointer travels further away, so flicking
+// the mouse off the box rips through scrollback the way a browser does.
+const autoScrollLines = (distance: number): number =>
+  Math.max(1, Math.floor(distance / 4));
+const autoScrollInterval = (distance: number): number =>
+  clamp(120 - distance * 10, 16, 180);
 
 export function Output() {
   useRenderTick();
@@ -23,8 +32,8 @@ export function Output() {
   const { cols, rows } = pane.outputSize();
   const isInteractive = pane.focus() === "output-interactive";
   const boxRef = useRef<BoxRenderable | null>(null);
-  const [selection, setSelection] = useState<SelectionRect | null>(null);
-  const dragRef = useRef<SelectionRect | null>(null);
+  const [selection, setSelection] = useState<AbsSelection | null>(null);
+  const dragRef = useRef<AbsSelection | null>(null);
   const autoScrollRef = useRef<{
     dir: -1 | 0 | 1;
     distance: number;
@@ -52,36 +61,6 @@ export function Output() {
     autoScrollRef.current = { dir: 0, distance: 0, timer: null };
   };
 
-  // Repeats scrollUp/scrollDown while the drag pointer stays past an edge.
-  // Drag rect's end is pinned to the appropriate corner so the highlight
-  // keeps growing in the scroll direction even though the pointer isn't.
-  const driveAutoScroll = (dir: -1 | 1, distance: number) => {
-    if (isAlt) return;
-    const s = autoScrollRef.current;
-    if (s.dir === dir && s.distance === distance && s.timer) return;
-    if (s.timer) clearInterval(s.timer);
-    const fire = () => {
-      const id = pm.currentId();
-      if (!id) return;
-      if (dir === -1) pm.scrollUp(id, 1);
-      else pm.scrollDown(id, 1);
-      const current = dragRef.current;
-      if (current) {
-        const endRow = dir === -1 ? 0 : innerRows - 1;
-        const endCol = dir === -1 ? 0 : innerCols - 1;
-        const rect: SelectionRect = { ...current, endRow, endCol };
-        dragRef.current = rect;
-        setSelection(rect);
-      }
-    };
-    autoScrollRef.current = {
-      dir,
-      distance,
-      timer: setInterval(fire, autoScrollTick(distance)),
-    };
-    fire();
-  };
-
   if (!proc?.session) {
     return (
       <box flexDirection="column" flexGrow={1} padding={1}>
@@ -92,6 +71,47 @@ export function Output() {
 
   const term = proc.session.terminal;
   const isAlt = term.usingAltScreen;
+
+  const pointToAbs = (p: Point): AbsPoint => {
+    const row = clamp(p.row, 0, Math.max(0, innerRows - 1));
+    const col = clamp(p.col, 0, Math.max(0, innerCols - 1));
+    return { lineId: viewportRowToLineId(term, proc.view, innerRows, row), col };
+  };
+
+  // Repeats scroll while the pointer stays past an edge. After each tick we
+  // re-anchor `focus` to the new visible edge so the selection extends by
+  // actual log lines, not by viewport rows — the highlight follows whatever
+  // content scrolled into view.
+  const driveAutoScroll = (dir: -1 | 1, distance: number) => {
+    if (isAlt) return;
+    const s = autoScrollRef.current;
+    if (s.dir === dir && s.distance === distance && s.timer) return;
+    if (s.timer) clearInterval(s.timer);
+    const lines = autoScrollLines(distance);
+    const fire = () => {
+      const id = pm.currentId();
+      if (!id) return;
+      if (dir === -1) pm.scrollUp(id, lines);
+      else pm.scrollDown(id, lines);
+      const current = dragRef.current;
+      if (!current) return;
+      const edgeRow = dir === -1 ? 0 : innerRows - 1;
+      const edgeCol = dir === -1 ? 0 : Math.max(0, innerCols - 1);
+      const focus: AbsPoint = {
+        lineId: viewportRowToLineId(term, proc.view, innerRows, edgeRow),
+        col: edgeCol,
+      };
+      const next: AbsSelection = { anchor: current.anchor, focus };
+      dragRef.current = next;
+      setSelection(next);
+    };
+    autoScrollRef.current = {
+      dir,
+      distance,
+      timer: setInterval(fire, autoScrollInterval(distance)),
+    };
+    fire();
+  };
 
   // Returns true iff we actually sent bytes — caller falls back to local
   // behaviour when the child hasn't requested mouse tracking.
@@ -116,14 +136,10 @@ export function Output() {
     }
     const p = toLocal(ev);
     if (!p) return;
-    const rect: SelectionRect = {
-      startRow: p.row,
-      startCol: p.col,
-      endRow: p.row,
-      endCol: p.col,
-    };
-    dragRef.current = rect;
-    setSelection(rect);
+    const pt = pointToAbs(p);
+    const sel: AbsSelection = { anchor: pt, focus: pt };
+    dragRef.current = sel;
+    setSelection(sel);
   };
 
   const onMouseDrag = (ev: MouseEvent) => {
@@ -135,17 +151,20 @@ export function Output() {
     const p = toLocal(ev);
     if (!p) return;
 
-    if (p.row < 0) return driveAutoScroll(-1, -p.row);
-    if (p.row >= innerRows) return driveAutoScroll(1, p.row - innerRows + 1);
+    if (p.row < 0) {
+      driveAutoScroll(-1, -p.row);
+      return;
+    }
+    if (p.row >= innerRows) {
+      driveAutoScroll(1, p.row - innerRows + 1);
+      return;
+    }
 
     stopAutoScroll();
-    const rect: SelectionRect = {
-      ...dragRef.current,
-      endRow: clamp(p.row, 0, innerRows - 1),
-      endCol: clamp(p.col, 0, innerCols - 1),
-    };
-    dragRef.current = rect;
-    setSelection(rect);
+    const focus = pointToAbs(p);
+    const next: AbsSelection = { anchor: dragRef.current.anchor, focus };
+    dragRef.current = next;
+    setSelection(next);
   };
 
   const onMouseRelease = (ev: MouseEvent) => {
@@ -154,11 +173,11 @@ export function Output() {
       return;
     }
     stopAutoScroll();
-    const rect = dragRef.current;
+    const sel = dragRef.current;
     dragRef.current = null;
-    if (!rect) return;
+    if (!sel) return;
     setSelection(null);
-    const text = extractSelectionText(term, proc.view, rect, innerRows, innerCols);
+    const text = extractAbsSelectionText(term, sel, innerCols);
     if (text) Effect.runFork(clipboard.copy(text));
   };
 

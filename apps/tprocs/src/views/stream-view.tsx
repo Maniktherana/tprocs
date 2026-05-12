@@ -1,7 +1,7 @@
 import type { TextChunk } from "@opentui/core";
 import type { ProcView } from "../services/process-manager";
 import type { Cell, Terminal } from "../terminal";
-import { highlightRangeForRow, type SelectionRect } from "./lookup";
+import { highlightRangeForLineId, type AbsSelection } from "./lookup";
 import { chunksForLine, styledTextOfLines } from "./styled-line";
 
 type Props = {
@@ -9,15 +9,14 @@ type Props = {
   readonly view: ProcView;
   readonly visibleRows: number;
   readonly visibleCols: number;
-  readonly selection: SelectionRect | null;
+  readonly selection: AbsSelection | null;
 };
 
 const sliceCols = (cells: readonly Cell[], cols: number): readonly Cell[] =>
   cells.length <= cols ? cells : cells.slice(0, cols);
 
-// All rows are rendered through a single `<text>` with a StyledText payload.
-// Per-row `<text>` is non-negotiably out: opentui then word-wraps and packs
-// overflow into extra columns.
+// Single `<text>` payload; per-row `<text>` triggers opentui's word-wrap pass
+// and the dreaded multi-column packing bug.
 export function StreamView({ term, view, visibleRows, visibleCols, selection }: Props) {
   const sb = term.scrollbackCount;
   const total = sb + term.rows;
@@ -28,15 +27,15 @@ export function StreamView({ term, view, visibleRows, visibleCols, selection }: 
 
   const lines: TextChunk[][] = Array.from({ length: visibleRows });
   for (let r = 0; r < visibleRows; r++) {
+    const lineId = top + r;
     const hl = selection
-      ? highlightRangeForRow(selection, r, visibleCols)
+      ? highlightRangeForLineId(selection, lineId, visibleCols)
       : null;
-    const logical = top + r;
-    if (logical < sb) {
-      const sbLine = term.scrollbackLine(sb - 1 - logical);
+    if (lineId < sb) {
+      const sbLine = term.scrollbackLine(sb - 1 - lineId);
       lines[r] = chunksForLine(sliceCols(sbLine, visibleCols), fg, bg, hl);
-    } else if (logical < total) {
-      const vpRow = grid[logical - sb] ?? [];
+    } else if (lineId < total) {
+      const vpRow = grid[lineId - sb] ?? [];
       lines[r] = chunksForLine(sliceCols(vpRow, visibleCols), fg, bg, hl);
     } else if (hl) {
       lines[r] = chunksForLine([], fg, bg, hl);
