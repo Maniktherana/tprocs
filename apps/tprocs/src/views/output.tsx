@@ -9,7 +9,6 @@ import {
 } from "./lookup";
 import { encodeSgrMouse } from "./mouse-encode";
 import {
-  DRAG_AUTOSCROLL_STALE_MS,
   dragScrollIntent,
   verticalDirection,
   wheelLines,
@@ -39,10 +38,10 @@ export function Output() {
   const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const autoScrollRef = useRef<{
     dir: -1 | 0 | 1;
-    lines: number;
-    lastEventAt: number;
+    accumulator: number;
+    linesPerSecond: number;
     timer: ReturnType<typeof setInterval> | null;
-  }>({ dir: 0, lines: 0, lastEventAt: 0, timer: null });
+  }>({ dir: 0, accumulator: 0, linesPerSecond: 0, timer: null });
 
   useEffect(() => {
     return () => {
@@ -65,8 +64,8 @@ export function Output() {
     if (s.timer) clearInterval(s.timer);
     autoScrollRef.current = {
       dir: 0,
-      lines: 0,
-      lastEventAt: 0,
+      accumulator: 0,
+      linesPerSecond: 0,
       timer: null,
     };
   };
@@ -126,32 +125,40 @@ export function Output() {
     setSelection(next);
   };
 
-  const applyDragScroll = (dir: -1 | 1, lines: number) => {
+  const applyDragScroll = (dir: -1 | 1, lines: number): boolean => {
     const id = pm.currentId();
-    if (!id) return;
+    if (!id) return false;
+    const before = pm.get(id)?.view.viewOffset;
     if (dir === -1) pm.scrollUp(id, lines);
     else pm.scrollDown(id, lines);
+    const after = pm.get(id)?.view.viewOffset;
     updateDragFocusToEdge(dir);
+    return before !== after;
   };
 
   const driveAutoScroll = (intent: NonNullable<ReturnType<typeof dragScrollIntent>>) => {
     if (isAlt) return;
     const s = autoScrollRef.current;
-    const now = Date.now();
-    autoScrollRef.current.lastEventAt = now;
-    if (s.dir === intent.direction && s.lines === intent.lines && s.timer) return;
+    if (
+      s.dir === intent.direction &&
+      s.linesPerSecond === intent.linesPerSecond &&
+      s.timer
+    )
+      return;
     if (s.timer) clearInterval(s.timer);
+    const accumulator = s.dir === intent.direction ? s.accumulator : 0;
     const fire = () => {
-      if (Date.now() - autoScrollRef.current.lastEventAt > DRAG_AUTOSCROLL_STALE_MS) {
-        stopAutoScroll();
-        return;
-      }
-      applyDragScroll(intent.direction, intent.lines);
+      autoScrollRef.current.accumulator +=
+        intent.linesPerSecond * (intent.intervalMs / 1000);
+      const lines = Math.trunc(autoScrollRef.current.accumulator);
+      if (lines < 1) return;
+      autoScrollRef.current.accumulator -= lines;
+      if (!applyDragScroll(intent.direction, lines)) stopAutoScroll();
     };
     autoScrollRef.current = {
       dir: intent.direction,
-      lines: intent.lines,
-      lastEventAt: now,
+      accumulator,
+      linesPerSecond: intent.linesPerSecond,
       timer: setInterval(fire, intent.intervalMs),
     };
     fire();
@@ -237,10 +244,6 @@ export function Output() {
     }
   };
 
-  const onMouseOut = () => {
-    stopAutoScroll();
-  };
-
   // Wheel routing in interactive mode:
   //   1. Child opted into mouse tracking → send SGR mouse events.
   //   2. Alt-screen (fullscreen TUI) without mouse tracking → synthesize
@@ -278,7 +281,6 @@ export function Output() {
       onMouseDrag={onMouseDrag}
       onMouseDragEnd={onMouseRelease}
       onMouseDrop={onMouseRelease}
-      onMouseOut={onMouseOut}
       onMouseUp={onMouseRelease}
       onMouseScroll={onMouseScroll}
     >

@@ -20,9 +20,25 @@ describe("output scroll policy", () => {
 
   it("uses small fixed drag autoscroll tiers at the pane edges", () => {
     expect(dragScrollIntent(4, 10)).toBeNull();
-    expect(dragScrollIntent(0, 10)).toMatchObject({ direction: -1, lines: 1 });
-    expect(dragScrollIntent(9, 10)).toMatchObject({ direction: 1, lines: 1 });
-    expect(dragScrollIntent(-4, 10)).toMatchObject({ direction: -1, lines: 2 });
-    expect(dragScrollIntent(13, 10)).toMatchObject({ direction: 1, lines: 2 });
+    expect(dragScrollIntent(2, 10)).toMatchObject({
+      direction: -1,
+      linesPerSecond: 6,
+    });
+    expect(dragScrollIntent(1, 10)).toMatchObject({
+      direction: -1,
+      linesPerSecond: 36,
+    });
+    expect(dragScrollIntent(0, 10)).toMatchObject({
+      direction: -1,
+      linesPerSecond: 72,
+    });
+    expect(dragScrollIntent(7, 10)).toMatchObject({
+      direction: 1,
+      linesPerSecond: 6,
+    });
+    expect(dragScrollIntent(9, 10)).toMatchObject({
+      direction: 1,
+      linesPerSecond: 72,
+    });
   });
 });
