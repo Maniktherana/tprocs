@@ -29,6 +29,8 @@ export const InputRouterLive = Layer.effect(
         if (id) yield* op(id);
       });
 
+    // Route through SIGINT so the top-level signal handler does the
+    // disposal; that's the single exit codepath (Ctrl-C, crash, quit cmd).
     const quit = (force: boolean): Effect.Effect<void> =>
       Effect.gen(function* () {
         const ids = pm.procs().map((p) => p.id);
@@ -38,7 +40,7 @@ export const InputRouterLive = Layer.effect(
           { concurrency: "unbounded" },
         );
         if (!force) yield* Effect.sleep(`${QUIT_GRACE_MS} millis`);
-        yield* Effect.sync(() => process.exit(0));
+        yield* Effect.sync(() => process.kill(process.pid, "SIGINT"));
       });
 
     const execute = (cmd: AppCommand): Effect.Effect<void> => {

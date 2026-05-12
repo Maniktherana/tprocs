@@ -1,4 +1,3 @@
-import { createCliRenderer } from "@opentui/core";
 import { createRoot } from "@opentui/react";
 import { Effect, Layer, ManagedRuntime } from "effect";
 import { parseCli, USAGE } from "./cli";
@@ -7,6 +6,7 @@ import { InputRouter, InputRouterLive } from "./services/input-router";
 import { PaneService, PaneServiceLive } from "./services/pane";
 import { ProcessManager, ProcessManagerLive } from "./services/process-manager";
 import { PtyLive } from "./services/pty/service";
+import { Renderer, RendererLive } from "./services/renderer";
 import { RendererBridge, RendererBridgeLive } from "./services/renderer-bridge";
 import { TerminalEngineLive } from "./services/terminal-engine";
 import { TerminalStateLive } from "./services/terminal-state";
@@ -23,14 +23,6 @@ if (parsed.kind === "error") {
   process.exit(2);
 }
 
-// Layer graph (bottom-up):
-//   TerminalEngineLive  — loads the ghostty wasm exactly once
-//   TerminalStateLive   — depends on TerminalEngine; spawns per-proc terminals
-//   PtyLive             — independent
-//   ProcessManagerLive  — depends on both
-//   PaneServiceLive     — independent UI state
-//   RendererBridgeLive  — depends on PM + Pane to subscribe to mutations
-//   InputRouter / Clipboard — top of stack
 const Engine = TerminalEngineLive;
 const TerminalStateProvided = TerminalStateLive.pipe(Layer.provide(Engine));
 const BaseDeps = Layer.mergeAll(PtyLive, TerminalStateProvided);
@@ -38,6 +30,7 @@ const Mid = Layer.mergeAll(ProcessManagerLive, PaneServiceLive).pipe(
   Layer.provide(BaseDeps),
 );
 const AppLayer = Layer.mergeAll(
+  RendererLive,
   RendererBridgeLive,
   InputRouterLive,
   ClipboardLive,
@@ -54,6 +47,7 @@ const services: Services = await runtime.runPromise(
     clipboard: Clipboard,
   }),
 );
+const { renderer } = await runtime.runPromise(Renderer);
 
 for (const p of parsed.procs) {
   await runtime.runPromise(
@@ -66,7 +60,28 @@ for (const p of parsed.procs) {
   );
 }
 
-const renderer = await createCliRenderer();
+let disposing = false;
+const dispose = (exitCode: number): void => {
+  if (disposing) return;
+  disposing = true;
+  runtime
+    .dispose()
+    .catch((err) => console.error("dispose failed:", err))
+    .finally(() => process.exit(exitCode));
+};
+
+for (const sig of ["SIGINT", "SIGTERM", "SIGHUP"] as const) {
+  process.on(sig, () => dispose(0));
+}
+process.on("uncaughtException", (err) => {
+  console.error("uncaughtException:", err);
+  dispose(1);
+});
+process.on("unhandledRejection", (err) => {
+  console.error("unhandledRejection:", err);
+  dispose(1);
+});
+
 createRoot(renderer).render(
   <ServicesProvider value={services}>
     <App />
