@@ -29,10 +29,10 @@ index 4f8fef88e..ca9fb1d4d 100644
  #include <ghostty/vt/key.h>
 diff --git a/include/ghostty/vt/terminal.h b/include/ghostty/vt/terminal.h
 new file mode 100644
-index 000000000..298ad36c1
+index 000000000..a61efce7e
 --- /dev/null
 +++ b/include/ghostty/vt/terminal.h
-@@ -0,0 +1,249 @@
+@@ -0,0 +1,266 @@
 +/**
 + * @file terminal.h
 + *
@@ -84,7 +84,19 @@ index 000000000..298ad36c1
 +    uint32_t palette[16];
 +} GhosttyTerminalConfig;
 +
-+/** Cell structure - 16 bytes, pre-resolved colors */
++/**
++ * Cell structure - 16 bytes.
++ *
++ * Color encoding: `color_kinds` packs both fg and bg kinds. Layout:
++ *   bits 0-1: fg_kind, bits 2-3: bg_kind. Values:
++ *     0 (GHOSTTY_COLOR_RGB)     — fg_r/g/b (or bg_r/g/b) hold literal channels.
++ *     1 (GHOSTTY_COLOR_PALETTE) — fg_r (or bg_r) holds the palette slot 0-255;
++ *                                 the other two bytes are 0.
++ *     2 (GHOSTTY_COLOR_DEFAULT) — caller should use the terminal default;
++ *                                 all three bytes are 0.
++ * This lets callers emit indexed/default SGR for palette passthrough instead
++ * of pre-resolving everything to RGB.
++ */
 +typedef struct {
 +    uint32_t codepoint;
 +    uint8_t fg_r, fg_g, fg_b;
@@ -93,8 +105,13 @@ index 000000000..298ad36c1
 +    uint8_t width;
 +    uint16_t hyperlink_id;
 +    uint8_t grapheme_len;  /* Number of extra codepoints beyond first (0 = no grapheme) */
-+    uint8_t _pad;
++    uint8_t color_kinds;   /* (bg_kind << 2) | fg_kind — see GHOSTTY_COLOR_* */
 +} GhosttyCell;
++
++/** Color kind enum packed into GhosttyCell.color_kinds */
++#define GHOSTTY_COLOR_RGB     0
++#define GHOSTTY_COLOR_PALETTE 1
++#define GHOSTTY_COLOR_DEFAULT 2
 +
 +/** Cell flags */
 +#define GHOSTTY_CELL_BOLD          (1 << 0)
@@ -393,10 +410,10 @@ index bc92597f5..18503933f 100644
      _ = @import("../../lib/allocator.zig");
 diff --git a/src/terminal/c/terminal.zig b/src/terminal/c/terminal.zig
 new file mode 100644
-index 000000000..d57b4e405
+index 000000000..691b92993
 --- /dev/null
 +++ b/src/terminal/c/terminal.zig
-@@ -0,0 +1,1025 @@
+@@ -0,0 +1,1126 @@
 +//! C API wrapper for Terminal
 +//!
 +//! This provides a minimal, high-performance interface to Ghostty's Terminal
@@ -725,7 +742,16 @@ index 000000000..d57b4e405
 +    last_screen_is_alternate: bool = false,
 +};
 +
-+/// C-compatible cell structure (16 bytes)
++/// Color kind packed into the cell. Bits 0-1 = fg, bits 2-3 = bg.
++/// Values:
++///   0 = rgb     (fg_r/g/b or bg_r/g/b hold the literal channel bytes)
++///   1 = palette (fg_r or bg_r holds the palette slot 0-255; other bytes 0)
++///   2 = default (caller should use terminal default; rgb bytes 0)
++pub const GHOSTTY_CK_RGB: u8 = 0;
++pub const GHOSTTY_CK_PALETTE: u8 = 1;
++pub const GHOSTTY_CK_DEFAULT: u8 = 2;
++
++/// C-compatible cell structure (16 bytes).
 +pub const GhosttyCell = extern struct {
 +    codepoint: u32,
 +    fg_r: u8,
@@ -738,8 +764,13 @@ index 000000000..d57b4e405
 +    width: u8,
 +    hyperlink_id: u16,
 +    grapheme_len: u8 = 0, // Number of extra codepoints beyond first
-+    _pad: u8 = 0,
++    /// (bg_kind << 2) | fg_kind — see GHOSTTY_CK_* constants.
++    color_kinds: u8 = 0,
 +};
++
++inline fn packColorKinds(fg_kind: u8, bg_kind: u8) u8 {
++    return (bg_kind << 2) | (fg_kind & 0x03);
++}
 +
 +/// Dirty state
 +pub const GhosttyDirty = enum(u8) {
@@ -1007,15 +1038,16 @@ index 000000000..d57b4e405
 +            for (0..cols) |_| {
 +                out[idx] = .{
 +                    .codepoint = 0,
-+                    .fg_r = rs.colors.foreground.r,
-+                    .fg_g = rs.colors.foreground.g,
-+                    .fg_b = rs.colors.foreground.b,
-+                    .bg_r = rs.colors.background.r,
-+                    .bg_g = rs.colors.background.g,
-+                    .bg_b = rs.colors.background.b,
++                    .fg_r = 0,
++                    .fg_g = 0,
++                    .fg_b = 0,
++                    .bg_r = 0,
++                    .bg_g = 0,
++                    .bg_b = 0,
 +                    .flags = 0,
 +                    .width = 1,
 +                    .hyperlink_id = 0,
++                    .color_kinds = packColorKinds(GHOSTTY_CK_DEFAULT, GHOSTTY_CK_DEFAULT),
 +                };
 +                idx += 1;
 +            }
@@ -1030,15 +1062,16 @@ index 000000000..d57b4e405
 +                // Past end of row, fill with default
 +                out[idx] = .{
 +                    .codepoint = 0,
-+                    .fg_r = rs.colors.foreground.r,
-+                    .fg_g = rs.colors.foreground.g,
-+                    .fg_b = rs.colors.foreground.b,
-+                    .bg_r = rs.colors.background.r,
-+                    .bg_g = rs.colors.background.g,
-+                    .bg_b = rs.colors.background.b,
++                    .fg_r = 0,
++                    .fg_g = 0,
++                    .fg_b = 0,
++                    .bg_r = 0,
++                    .bg_g = 0,
++                    .bg_b = 0,
 +                    .flags = 0,
 +                    .width = 1,
 +                    .hyperlink_id = 0,
++                    .color_kinds = packColorKinds(GHOSTTY_CK_DEFAULT, GHOSTTY_CK_DEFAULT),
 +                };
 +                idx += 1;
 +                continue;
@@ -1052,13 +1085,55 @@ index 000000000..d57b4e405
 +            else
 +                .{};
 +
-+            // Resolve colors
-+            const fg: color.RGB = switch (sty.fg_color) {
-+                .none => rs.colors.foreground,
-+                .palette => |i| rs.colors.palette[i],
-+                .rgb => |rgb| rgb,
-+            };
-+            const bg: color.RGB = if (sty.bg(cell, &rs.colors.palette)) |rgb| rgb else rs.colors.background;
++            // Resolve colors + record their kind so callers can decide whether
++            // to emit indexed/default SGR (palette passthrough) or truecolor.
++            var fg_r: u8 = 0;
++            var fg_g: u8 = 0;
++            var fg_b: u8 = 0;
++            var fg_kind: u8 = GHOSTTY_CK_DEFAULT;
++            switch (sty.fg_color) {
++                .none => {},
++                .palette => |i| {
++                    fg_kind = GHOSTTY_CK_PALETTE;
++                    fg_r = i;
++                },
++                .rgb => |rgb| {
++                    fg_kind = GHOSTTY_CK_RGB;
++                    fg_r = rgb.r;
++                    fg_g = rgb.g;
++                    fg_b = rgb.b;
++                },
++            }
++
++            var bg_r: u8 = 0;
++            var bg_g: u8 = 0;
++            var bg_b: u8 = 0;
++            var bg_kind: u8 = GHOSTTY_CK_DEFAULT;
++            switch (cell.content_tag) {
++                .bg_color_palette => {
++                    bg_kind = GHOSTTY_CK_PALETTE;
++                    bg_r = cell.content.color_palette;
++                },
++                .bg_color_rgb => {
++                    bg_kind = GHOSTTY_CK_RGB;
++                    bg_r = cell.content.color_rgb.r;
++                    bg_g = cell.content.color_rgb.g;
++                    bg_b = cell.content.color_rgb.b;
++                },
++                else => switch (sty.bg_color) {
++                    .none => {},
++                    .palette => |i| {
++                        bg_kind = GHOSTTY_CK_PALETTE;
++                        bg_r = i;
++                    },
++                    .rgb => |rgb| {
++                        bg_kind = GHOSTTY_CK_RGB;
++                        bg_r = rgb.r;
++                        bg_g = rgb.g;
++                        bg_b = rgb.b;
++                    },
++                },
++            }
 +
 +            // Build flags
 +            var flags: u8 = 0;
@@ -1079,12 +1154,12 @@ index 000000000..d57b4e405
 +
 +            out[idx] = .{
 +                .codepoint = cell.codepoint(),
-+                .fg_r = fg.r,
-+                .fg_g = fg.g,
-+                .fg_b = fg.b,
-+                .bg_r = bg.r,
-+                .bg_g = bg.g,
-+                .bg_b = bg.b,
++                .fg_r = fg_r,
++                .fg_g = fg_g,
++                .fg_b = fg_b,
++                .bg_r = bg_r,
++                .bg_g = bg_g,
++                .bg_b = bg_b,
 +                .flags = flags,
 +                .width = switch (cell.wide) {
 +                    .narrow => 1,
@@ -1093,6 +1168,7 @@ index 000000000..d57b4e405
 +                },
 +                .hyperlink_id = if (cell.hyperlink) 1 else 0,
 +                .grapheme_len = grapheme_len,
++                .color_kinds = packColorKinds(fg_kind, bg_kind),
 +            };
 +            idx += 1;
 +        }
@@ -1223,35 +1299,76 @@ index 000000000..d57b4e405
 +            // Fill with default
 +            out[x] = .{
 +                .codepoint = 0,
-+                .fg_r = rs.colors.foreground.r,
-+                .fg_g = rs.colors.foreground.g,
-+                .fg_b = rs.colors.foreground.b,
-+                .bg_r = rs.colors.background.r,
-+                .bg_g = rs.colors.background.g,
-+                .bg_b = rs.colors.background.b,
++                .fg_r = 0,
++                .fg_g = 0,
++                .fg_b = 0,
++                .bg_r = 0,
++                .bg_g = 0,
++                .bg_b = 0,
 +                .flags = 0,
 +                .width = 1,
 +                .hyperlink_id = 0,
++                .color_kinds = packColorKinds(GHOSTTY_CK_DEFAULT, GHOSTTY_CK_DEFAULT),
 +            };
 +            continue;
 +        }
-+        
++
 +        const cell = &cells[x];
-+        
++
 +        // Get style from page styles (cell has style_id)
 +        const sty: Style = if (cell.style_id > 0)
 +            page.styles.get(page.memory, cell.style_id).*
 +        else
 +            .{};
-+        
-+        // Resolve colors
-+        const fg: color.RGB = switch (sty.fg_color) {
-+            .none => rs.colors.foreground,
-+            .palette => |i| rs.colors.palette[i],
-+            .rgb => |rgb| rgb,
-+        };
-+        const bg: color.RGB = if (sty.bg(cell, &rs.colors.palette)) |rgb| rgb else rs.colors.background;
-+        
++
++        var fg_r: u8 = 0;
++        var fg_g: u8 = 0;
++        var fg_b: u8 = 0;
++        var fg_kind: u8 = GHOSTTY_CK_DEFAULT;
++        switch (sty.fg_color) {
++            .none => {},
++            .palette => |i| {
++                fg_kind = GHOSTTY_CK_PALETTE;
++                fg_r = i;
++            },
++            .rgb => |rgb| {
++                fg_kind = GHOSTTY_CK_RGB;
++                fg_r = rgb.r;
++                fg_g = rgb.g;
++                fg_b = rgb.b;
++            },
++        }
++
++        var bg_r: u8 = 0;
++        var bg_g: u8 = 0;
++        var bg_b: u8 = 0;
++        var bg_kind: u8 = GHOSTTY_CK_DEFAULT;
++        switch (cell.content_tag) {
++            .bg_color_palette => {
++                bg_kind = GHOSTTY_CK_PALETTE;
++                bg_r = cell.content.color_palette;
++            },
++            .bg_color_rgb => {
++                bg_kind = GHOSTTY_CK_RGB;
++                bg_r = cell.content.color_rgb.r;
++                bg_g = cell.content.color_rgb.g;
++                bg_b = cell.content.color_rgb.b;
++            },
++            else => switch (sty.bg_color) {
++                .none => {},
++                .palette => |i| {
++                    bg_kind = GHOSTTY_CK_PALETTE;
++                    bg_r = i;
++                },
++                .rgb => |rgb| {
++                    bg_kind = GHOSTTY_CK_RGB;
++                    bg_r = rgb.r;
++                    bg_g = rgb.g;
++                    bg_b = rgb.b;
++                },
++            },
++        }
++
 +        // Build flags
 +        var flags: u8 = 0;
 +        if (sty.flags.bold) flags |= 1 << 0;
@@ -1271,12 +1388,12 @@ index 000000000..d57b4e405
 +
 +        out[x] = .{
 +            .codepoint = cell.codepoint(),
-+            .fg_r = fg.r,
-+            .fg_g = fg.g,
-+            .fg_b = fg.b,
-+            .bg_r = bg.r,
-+            .bg_g = bg.g,
-+            .bg_b = bg.b,
++            .fg_r = fg_r,
++            .fg_g = fg_g,
++            .fg_b = fg_b,
++            .bg_r = bg_r,
++            .bg_g = bg_g,
++            .bg_b = bg_b,
 +            .flags = flags,
 +            .width = switch (cell.wide) {
 +                .narrow => 1,
@@ -1285,6 +1402,7 @@ index 000000000..d57b4e405
 +            },
 +            .hyperlink_id = if (cell.hyperlink) 1 else 0,
 +            .grapheme_len = grapheme_len,
++            .color_kinds = packColorKinds(fg_kind, bg_kind),
 +        };
 +    }
 +    return @intCast(cols);

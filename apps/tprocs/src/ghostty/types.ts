@@ -252,6 +252,18 @@ export const GHOSTTY_CONFIG_SIZE = 80;
 
 export type TerminalHandle = number;
 
+/**
+ * Color kind packed into GhosttyCell. fg in bits 0-1, bg in bits 2-3.
+ * - RGB     (0): fg_r/g/b (or bg_r/g/b) are literal channels.
+ * - PALETTE (1): fg_r (or bg_r) is the palette slot 0-255; other channels = 0.
+ * - DEFAULT (2): use terminal default; all channels = 0.
+ */
+export const enum ColorKind {
+  RGB = 0,
+  PALETTE = 1,
+  DEFAULT = 2,
+}
+
 export interface GhosttyCell {
   codepoint: number;
   fg_r: number;
@@ -264,6 +276,8 @@ export interface GhosttyCell {
   width: number;
   hyperlink_id: number;
   grapheme_len: number;
+  /** (bg_kind << 2) | fg_kind */
+  color_kinds: number;
 }
 
 export interface RGB {

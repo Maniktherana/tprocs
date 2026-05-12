@@ -398,9 +398,9 @@ export class GhosttyTerminal {
       for (let i = this.cellPool.length; i < total; i++) {
         this.cellPool.push({
           codepoint: 0,
-          fg_r: 204,
-          fg_g: 204,
-          fg_b: 204,
+          fg_r: 0,
+          fg_g: 0,
+          fg_b: 0,
           bg_r: 0,
           bg_g: 0,
           bg_b: 0,
@@ -408,6 +408,7 @@ export class GhosttyTerminal {
           width: 1,
           hyperlink_id: 0,
           grapheme_len: 0,
+          color_kinds: 0b1010, // both fg and bg = DEFAULT
         });
       }
     }
@@ -431,6 +432,7 @@ export class GhosttyTerminal {
       cell.width = u8[off + 11]!;
       cell.hyperlink_id = view.getUint16(off + 12, true);
       cell.grapheme_len = u8[off + 14]!;
+      cell.color_kinds = u8[off + 15]!;
     }
   }
 
@@ -453,6 +455,7 @@ export class GhosttyTerminal {
         width: u8[off + 11]!,
         hyperlink_id: view.getUint16(off + 12, true),
         grapheme_len: u8[off + 14]!,
+        color_kinds: u8[off + 15]!,
       });
     }
     return out;
