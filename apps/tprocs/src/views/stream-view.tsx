@@ -21,8 +21,6 @@ export function StreamView({ term, view, visibleRows, visibleCols, selection }: 
   const sb = term.scrollbackCount;
   const total = sb + term.rows;
   const top = Math.max(0, total - visibleRows - view.viewOffset);
-  const fg = term.defaultFg;
-  const bg = term.defaultBg;
   const grid = term.viewport();
 
   const lines: TextChunk[][] = Array.from({ length: visibleRows });
@@ -33,12 +31,12 @@ export function StreamView({ term, view, visibleRows, visibleCols, selection }: 
       : null;
     if (lineId < sb) {
       const sbLine = term.scrollbackLine(sb - 1 - lineId);
-      lines[r] = chunksForLine(sliceCols(sbLine, visibleCols), fg, bg, hl);
+      lines[r] = chunksForLine(sliceCols(sbLine, visibleCols), hl);
     } else if (lineId < total) {
       const vpRow = grid[lineId - sb] ?? [];
-      lines[r] = chunksForLine(sliceCols(vpRow, visibleCols), fg, bg, hl);
+      lines[r] = chunksForLine(sliceCols(vpRow, visibleCols), hl);
     } else if (hl) {
-      lines[r] = chunksForLine([], fg, bg, hl);
+      lines[r] = chunksForLine([], hl);
     } else {
       lines[r] = [];
     }

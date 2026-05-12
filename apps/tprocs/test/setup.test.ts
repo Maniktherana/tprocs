@@ -1,7 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import { spawn as spawnPty, type IPty } from "bun-pty";
 import { Ghostty } from "../src/ghostty";
-import { Terminal, type TerminalOptions } from "../src/terminal";
+import { ColorKind, Terminal, type TerminalOptions } from "../src/terminal";
 
 // Each setup test gets its own Terminal; share one wasm load.
 let ghosttyPromise: Promise<Ghostty> | null = null;
@@ -33,7 +33,25 @@ describe("libghostty WASM (via in-tree bindings)", () => {
     term.feed("\x1b[38;2;255;0;0mR\x1b[0m");
     const cell = term.cell(0, 0);
     expect(cell.char).toBe("R".codePointAt(0)!);
-    expect(cell.fg).toBe(0xff_00_00);
+    expect(cell.fg).toEqual({ kind: ColorKind.RGB, value: 0xff_00_00 });
+  });
+
+  it("preserves palette index for 8/16/256-color SGR (terminal passthrough)", async () => {
+    const term = await createTerm({ cols: 80, rows: 24 });
+    // SGR 31 = palette slot 1 (ANSI red); SGR 38;5;202 = 256-color slot 202.
+    term.feed("\x1b[31mR\x1b[0m\x1b[38;5;202mO\x1b[0m");
+    const r = term.cell(0, 0);
+    const o = term.cell(0, 1);
+    expect(r.fg).toEqual({ kind: ColorKind.PALETTE, value: 1 });
+    expect(o.fg).toEqual({ kind: ColorKind.PALETTE, value: 202 });
+  });
+
+  it("leaves untouched cells as DEFAULT-kind so the host terminal applies its bg/fg", async () => {
+    const term = await createTerm({ cols: 80, rows: 24 });
+    term.feed("x");
+    const c = term.cell(0, 0);
+    expect(c.fg.kind).toBe(ColorKind.DEFAULT);
+    expect(c.bg.kind).toBe(ColorKind.DEFAULT);
   });
 
   it("reports hasMouseTracking when the child enables ?1000h/?1002h/?1003h", async () => {

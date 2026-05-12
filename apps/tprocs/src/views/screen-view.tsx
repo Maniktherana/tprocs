@@ -14,8 +14,6 @@ type Props = {
 export function ScreenView({ term, visibleRows, visibleCols, selection }: Props) {
   const rows = Math.min(visibleRows, term.rows);
   const cols = Math.min(visibleCols, term.cols);
-  const fg = term.defaultFg;
-  const bg = term.defaultBg;
   const sb = term.scrollbackCount;
 
   const grid = term.viewport();
@@ -25,7 +23,7 @@ export function ScreenView({ term, visibleRows, visibleCols, selection }: Props)
     const hl = selection
       ? highlightRangeForLineId(selection, sb + r, cols)
       : null;
-    lines[r] = chunksForLine(row.slice(0, cols), fg, bg, hl);
+    lines[r] = chunksForLine(row.slice(0, cols), hl);
   }
 
   return <text wrapMode="none" selectable={false} flexGrow={1} content={styledTextOfLines(lines)} />;

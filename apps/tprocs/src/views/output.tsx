@@ -14,6 +14,7 @@ import {
   wheelLines,
   type VerticalDirection,
 } from "./output-scroll";
+import { Toast } from "./components/toast";
 import { ScreenView } from "./screen-view";
 import { useRenderTick, useServices } from "./services-context";
 import { StreamView } from "./stream-view";
@@ -45,13 +46,14 @@ export function Output() {
 
   useEffect(() => {
     return () => {
-      if (autoScrollRef.current.timer) clearInterval(autoScrollRef.current.timer);
+      if (autoScrollRef.current.timer)
+        clearInterval(autoScrollRef.current.timer);
       if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
     };
   }, []);
 
-  const innerCols = Math.max(0, cols - 2);
-  const innerRows = Math.max(0, rows - 2);
+  const innerCols = Math.max(0, cols);
+  const innerRows = Math.max(0, rows);
 
   const toLocal = (ev: { x: number; y: number }): Point | null => {
     const box = boxRef.current;
@@ -99,7 +101,10 @@ export function Output() {
   const pointToAbs = (p: Point): AbsPoint => {
     const row = clamp(p.row, 0, Math.max(0, innerRows - 1));
     const col = clamp(p.col, 0, Math.max(0, innerCols - 1));
-    return { lineId: viewportRowToLineId(term, proc.view, innerRows, row), col };
+    return {
+      lineId: viewportRowToLineId(term, proc.view, innerRows, row),
+      col,
+    };
   };
 
   const scrollByDirection = (direction: VerticalDirection, lines: number) => {
@@ -136,7 +141,9 @@ export function Output() {
     return before !== after;
   };
 
-  const driveAutoScroll = (intent: NonNullable<ReturnType<typeof dragScrollIntent>>) => {
+  const driveAutoScroll = (
+    intent: NonNullable<ReturnType<typeof dragScrollIntent>>,
+  ) => {
     if (isAlt) return;
     const s = autoScrollRef.current;
     if (
@@ -261,7 +268,12 @@ export function Output() {
     if (!direction) return;
 
     if (isInteractive && isAlt) {
-      const key = s.direction === "down" ? "\x1B[B" : s.direction === "up" ? "\x1B[A" : null;
+      const key =
+        s.direction === "down"
+          ? "\x1B[B"
+          : s.direction === "up"
+            ? "\x1B[A"
+            : null;
       if (!key) return;
       const ticks = Math.max(1, s.delta);
       Effect.runFork(pm.write(id, key.repeat(ticks)));
@@ -300,17 +312,7 @@ export function Output() {
           selection={selection}
         />
       )}
-      {toast && (
-        <box
-          position="absolute"
-          bottom={0}
-          right={1}
-          paddingX={1}
-          backgroundColor="#1f2937"
-        >
-          <text fg="#d1fae5">{toast}</text>
-        </box>
-      )}
+      {toast && <Toast message={toast} />}
     </box>
   );
 }

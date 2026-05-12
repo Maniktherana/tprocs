@@ -5,11 +5,25 @@ import {
   type GhosttyCell,
 } from "./ghostty";
 
-// fg/bg packed as 0xRRGGBB; flags is a CellFlags bitfield; char=0 means "no glyph".
+// Color kind preserved from Ghostty's parser so we can decide whether to emit
+// truecolor, indexed (palette-passthrough), or "use terminal default" SGR.
+// Mirrors GhosttyCell.color_kinds nibbles in packages/ghostty.
+export const enum ColorKind {
+  RGB = 0,
+  PALETTE = 1,
+  DEFAULT = 2,
+}
+
+// `value` meaning depends on `kind`:
+//   - RGB:     0xRRGGBB
+//   - PALETTE: palette slot 0-255
+//   - DEFAULT: 0 (use terminal default)
+export type CellColor = { readonly kind: ColorKind; readonly value: number };
+
 export type Cell = {
   readonly char: number;
-  readonly fg: number;
-  readonly bg: number;
+  readonly fg: CellColor;
+  readonly bg: CellColor;
   readonly flags: number;
 };
 
@@ -21,34 +35,38 @@ export type TerminalOptions = {
   scrollbackLimit?: number;
 };
 
-const BLANK: Cell = { char: 32, fg: 0xff_ff_ff, bg: 0x00_00_00, flags: 0 };
+const DEFAULT_COLOR: CellColor = { kind: ColorKind.DEFAULT, value: 0 };
+const BLANK: Cell = { char: 32, fg: DEFAULT_COLOR, bg: DEFAULT_COLOR, flags: 0 };
 
 const packRgb = (r: number, g: number, b: number): number =>
   ((r & 0xff) << 16) | ((g & 0xff) << 8) | (b & 0xff);
 
-// Ghostty's wasm bridge resolves `.none` colors against the palette before
-// emitting cell bytes, so fg/bg are ALWAYS the real RGB to paint. Do NOT
-// substitute defaults here: (0,0,0) is legitimately black, not "default".
+const decodeColor = (kind: number, r: number, g: number, b: number): CellColor => {
+  if (kind === ColorKind.PALETTE) return { kind: ColorKind.PALETTE, value: r };
+  if (kind === ColorKind.DEFAULT) return DEFAULT_COLOR;
+  return { kind: ColorKind.RGB, value: packRgb(r, g, b) };
+};
+
 const toCell = (raw: GhosttyCell | null | undefined): Cell => {
   if (!raw) return BLANK;
+  const fgKind = raw.color_kinds & 0x03;
+  const bgKind = (raw.color_kinds >> 2) & 0x03;
   return {
     char: raw.codepoint || 32,
-    fg: packRgb(raw.fg_r, raw.fg_g, raw.fg_b),
-    bg: packRgb(raw.bg_r, raw.bg_g, raw.bg_b),
+    fg: decodeColor(fgKind, raw.fg_r, raw.fg_g, raw.fg_b),
+    bg: decodeColor(bgKind, raw.bg_r, raw.bg_g, raw.bg_b),
     flags: raw.flags,
   };
 };
 
-// Trim only the trailing default-style space cells; cells with non-default bg
-// are visually significant (e.g. status bars that pad with spaces).
-const trimTrailing = (
-  cells: readonly Cell[],
-  defaultBg: number,
-): readonly Cell[] => {
+// Trim trailing blank cells (space char, no flags, default bg). Cells whose bg
+// is anything other than DEFAULT are visually significant (e.g. status bars
+// that pad with spaces) and must stay.
+const trimTrailing = (cells: readonly Cell[]): readonly Cell[] => {
   let end = cells.length;
   while (end > 0) {
     const c = cells[end - 1]!;
-    if (c.char !== 32 || c.flags !== 0 || c.bg !== defaultBg) break;
+    if (c.char !== 32 || c.flags !== 0 || c.bg.kind !== ColorKind.DEFAULT) break;
     end--;
   }
   return cells.slice(0, end);
@@ -61,29 +79,16 @@ const trimTrailing = (
 type ViewportCache = readonly (readonly Cell[])[] | null;
 
 export class Terminal {
-  readonly defaultFg: number;
-  readonly defaultBg: number;
-
   private viewportCache: ViewportCache = null;
   private scrollbackCache = new Map<number, readonly Cell[]>();
 
-  private constructor(
-    private readonly core: GhosttyTerminal,
-    defaultFg: number,
-    defaultBg: number,
-  ) {
-    this.defaultFg = defaultFg;
-    this.defaultBg = defaultBg;
-  }
+  private constructor(private readonly core: GhosttyTerminal) {}
 
   static create(ghostty: Ghostty, opts: TerminalOptions): Terminal {
     const core = ghostty.createTerminal(opts.cols, opts.rows, {
       scrollbackLimit: opts.scrollbackLimit ?? 0,
     });
-    const colors = core.getColors();
-    const fg = packRgb(colors.foreground.r, colors.foreground.g, colors.foreground.b);
-    const bg = packRgb(colors.background.r, colors.background.g, colors.background.b);
-    return new Terminal(core, fg, bg);
+    return new Terminal(core);
   }
 
   private invalidate(): void {
@@ -138,7 +143,7 @@ export class Terminal {
     if (offset < 0 || offset >= len) return [];
     const raw = this.core.getScrollbackLine(len - 1 - offset);
     if (!raw) return [];
-    const trimmed = trimTrailing(raw.map(toCell), this.defaultBg);
+    const trimmed = trimTrailing(raw.map(toCell));
     this.scrollbackCache.set(offset, trimmed);
     return trimmed;
   }

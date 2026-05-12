@@ -1,44 +1,41 @@
-import { TextAttributes } from "@opentui/core";
-import type { ProcState, ProcStatus } from "../services/process-manager";
+import type { ProcState } from "../services/process-manager";
+import { StatusDot } from "./components/status-dot";
 import { useRenderTick, useServices } from "./services-context";
+import { theme } from "./theme";
 
 type ProcRowProps = {
   readonly proc: ProcState;
   readonly selected: boolean;
+  readonly width: number;
   readonly onSelect: () => void;
 };
 
-const statusLabel = (s: ProcStatus): string => {
-  if (s.kind === "running") return " UP ";
-  if (s.kind === "paused") return " PAUSED ";
-  if (s.kind === "exited") return ` DOWN (${s.exitCode}) `;
-  return " IDLE ";
+const ROW_PAD = 2; // paddingX={1} on each side
+const MARKER = 2; // "› " or "  "
+const DOT = 2; // " ■"
+
+const truncate = (s: string, max: number): string => {
+  if (max <= 0) return "";
+  if (s.length <= max) return s;
+  if (max === 1) return "…";
+  return s.slice(0, max - 1) + "…";
 };
 
-const statusFg = (s: ProcStatus): string => {
-  if (s.kind === "running") return "#4ade80";
-  if (s.kind === "paused") return "#facc15";
-  if (s.kind === "exited") return s.exitCode === 0 ? "#60a5fa" : "#f87171";
-  return "#9ca3af";
-};
-
-function ProcRow({ proc, selected, onSelect }: ProcRowProps) {
+function ProcRow({ proc, selected, width, onSelect }: ProcRowProps) {
+  const nameMax = Math.max(0, width - ROW_PAD - MARKER - DOT);
   return (
     <box
       flexDirection="row"
-      paddingLeft={1}
-      paddingRight={1}
-      backgroundColor={selected ? "#3f3f46" : undefined}
+      paddingX={1}
+      backgroundColor={selected ? theme.bgRow : theme.bgPanel}
       onMouseDown={onSelect}
     >
-      <text>
+      <text fg={selected ? theme.fgActive : theme.fgDim}>
         {selected ? "› " : "  "}
-        {proc.name}
       </text>
+      <text>{truncate(proc.name, nameMax)}</text>
       <box flexGrow={1} />
-      <text fg={statusFg(proc.status)} attributes={TextAttributes.BOLD}>
-        {statusLabel(proc.status)}
-      </text>
+      <StatusDot status={proc.status} />
     </box>
   );
 }
@@ -48,17 +45,23 @@ export function ProcsList() {
   const { pm, pane } = useServices();
   const procs = pm.procs();
   const currentId = pm.currentId();
+  const width = pane.procsListWidth();
 
   return (
-    <box flexDirection="column" flexGrow={1}>
+    <box
+      flexDirection="column"
+      flexGrow={1}
+      paddingY={0.5}
+      backgroundColor={theme.bgPanel}
+    >
       {procs.map((p: ProcState) => (
         <ProcRow
           key={p.id}
           proc={p}
           selected={p.id === currentId}
+          width={width}
           onSelect={() => {
             pm.selectById(p.id);
-            // Clicking the procs sidebar always exits interactive mode.
             pane.setFocus("procs");
           }}
         />
