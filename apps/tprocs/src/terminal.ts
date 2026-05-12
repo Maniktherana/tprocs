@@ -77,7 +77,9 @@ export class Terminal {
   }
 
   static create(ghostty: Ghostty, opts: TerminalOptions): Terminal {
-    const core = ghostty.createTerminal(opts.cols, opts.rows);
+    const core = ghostty.createTerminal(opts.cols, opts.rows, {
+      scrollbackLimit: opts.scrollbackLimit ?? 0,
+    });
     const colors = core.getColors();
     const fg = packRgb(colors.foreground.r, colors.foreground.g, colors.foreground.b);
     const bg = packRgb(colors.background.r, colors.background.g, colors.background.b);

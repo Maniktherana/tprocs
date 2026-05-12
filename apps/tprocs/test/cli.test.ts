@@ -35,9 +35,25 @@ describe("parseCli", () => {
     if (r.kind === "ok") expect(r.procs.map((p) => p.name)).toEqual(["a", "b"]);
   });
 
+  it("defaults scrollback to unlimited and accepts an explicit cap", () => {
+    const unlimited = parseCli(["echo hi"]);
+    expect(unlimited.kind).toBe("ok");
+    if (unlimited.kind === "ok") expect(unlimited.scrollbackLimit).toBe(0);
+
+    const capped = parseCli(["--scrollback", "50000", "echo hi"]);
+    expect(capped.kind).toBe("ok");
+    if (capped.kind === "ok") expect(capped.scrollbackLimit).toBe(50000);
+  });
+
   it("errors when --names has no value", () => {
     const r = parseCli(["--names"]);
     expect(r.kind).toBe("error");
+  });
+
+  it("errors when --scrollback is invalid", () => {
+    expect(parseCli(["--scrollback"]).kind).toBe("error");
+    expect(parseCli(["--scrollback", "-1", "echo hi"]).kind).toBe("error");
+    expect(parseCli(["--scrollback", "nope", "echo hi"]).kind).toBe("error");
   });
 
   it("errors when no positional commands were supplied", () => {

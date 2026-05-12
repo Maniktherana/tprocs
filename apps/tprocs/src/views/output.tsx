@@ -8,6 +8,14 @@ import {
   type AbsSelection,
 } from "./lookup";
 import { encodeSgrMouse } from "./mouse-encode";
+import {
+  DRAG_AUTOSCROLL_STALE_MS,
+  WHEEL_FRAME_MS,
+  dragScrollIntent,
+  queueWheelLines,
+  verticalDirection,
+  type VerticalDirection,
+} from "./output-scroll";
 import { ScreenView } from "./screen-view";
 import { useRenderTick, useServices } from "./services-context";
 import { StreamView } from "./stream-view";
@@ -17,13 +25,7 @@ type Point = { row: number; col: number };
 const clamp = (n: number, lo: number, hi: number): number =>
   n < lo ? lo : n > hi ? hi : n;
 
-// Auto-scroll feel: distance is "cells past the edge". Tick interval shrinks
-// and lines-per-tick grows as the pointer travels further away, so flicking
-// the mouse off the box rips through scrollback the way a browser does.
-const autoScrollLines = (distance: number): number =>
-  Math.max(1, Math.floor(distance / 4));
-const autoScrollInterval = (distance: number): number =>
-  clamp(120 - distance * 10, 16, 180);
+const TOAST_MS = 1200;
 
 export function Output() {
   useRenderTick();
@@ -33,16 +35,26 @@ export function Output() {
   const isInteractive = pane.focus() === "output-interactive";
   const boxRef = useRef<BoxRenderable | null>(null);
   const [selection, setSelection] = useState<AbsSelection | null>(null);
+  const [toast, setToast] = useState<string | null>(null);
   const dragRef = useRef<AbsSelection | null>(null);
+  const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const wheelRef = useRef<{
+    direction: VerticalDirection | null;
+    pending: number;
+    timer: ReturnType<typeof setTimeout> | null;
+  }>({ direction: null, pending: 0, timer: null });
   const autoScrollRef = useRef<{
     dir: -1 | 0 | 1;
-    distance: number;
+    lines: number;
+    lastEventAt: number;
     timer: ReturnType<typeof setInterval> | null;
-  }>({ dir: 0, distance: 0, timer: null });
+  }>({ dir: 0, lines: 0, lastEventAt: 0, timer: null });
 
   useEffect(() => {
     return () => {
       if (autoScrollRef.current.timer) clearInterval(autoScrollRef.current.timer);
+      if (wheelRef.current.timer) clearTimeout(wheelRef.current.timer);
+      if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
     };
   }, []);
 
@@ -58,8 +70,35 @@ export function Output() {
   const stopAutoScroll = () => {
     const s = autoScrollRef.current;
     if (s.timer) clearInterval(s.timer);
-    autoScrollRef.current = { dir: 0, distance: 0, timer: null };
+    autoScrollRef.current = {
+      dir: 0,
+      lines: 0,
+      lastEventAt: 0,
+      timer: null,
+    };
   };
+
+  const resetWheelScroll = () => {
+    const s = wheelRef.current;
+    if (s.timer) clearTimeout(s.timer);
+    wheelRef.current = { direction: null, pending: 0, timer: null };
+  };
+
+  const showToast = (message: string) => {
+    if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
+    setToast(message);
+    toastTimerRef.current = setTimeout(() => {
+      setToast(null);
+      toastTimerRef.current = null;
+    }, TOAST_MS);
+  };
+
+  useEffect(() => {
+    stopAutoScroll();
+    resetWheelScroll();
+    dragRef.current = null;
+    setSelection(null);
+  }, [proc?.id, isInteractive]);
 
   if (!proc?.session) {
     return (
@@ -78,37 +117,76 @@ export function Output() {
     return { lineId: viewportRowToLineId(term, proc.view, innerRows, row), col };
   };
 
-  // Repeats scroll while the pointer stays past an edge. After each tick we
-  // re-anchor `focus` to the new visible edge so the selection extends by
-  // actual log lines, not by viewport rows — the highlight follows whatever
-  // content scrolled into view.
-  const driveAutoScroll = (dir: -1 | 1, distance: number) => {
-    if (isAlt) return;
-    const s = autoScrollRef.current;
-    if (s.dir === dir && s.distance === distance && s.timer) return;
-    if (s.timer) clearInterval(s.timer);
-    const lines = autoScrollLines(distance);
-    const fire = () => {
-      const id = pm.currentId();
-      if (!id) return;
-      if (dir === -1) pm.scrollUp(id, lines);
-      else pm.scrollDown(id, lines);
-      const current = dragRef.current;
-      if (!current) return;
-      const edgeRow = dir === -1 ? 0 : innerRows - 1;
-      const edgeCol = dir === -1 ? 0 : Math.max(0, innerCols - 1);
-      const focus: AbsPoint = {
+  const scrollByDirection = (direction: VerticalDirection, lines: number) => {
+    const id = pm.currentId();
+    if (!id) return;
+    if (direction === "up") pm.scrollUp(id, lines);
+    else pm.scrollDown(id, lines);
+  };
+
+  const flushWheelScroll = () => {
+    const { direction, pending } = wheelRef.current;
+    wheelRef.current = { direction: null, pending: 0, timer: null };
+    if (!direction || pending < 1) return;
+    scrollByDirection(direction, pending);
+  };
+
+  const queueWheelScroll = (direction: VerticalDirection, delta: number) => {
+    const current = wheelRef.current;
+    if (current.timer) clearTimeout(current.timer);
+    wheelRef.current = {
+      direction,
+      pending: queueWheelLines(
+        current.direction === direction ? current.pending : 0,
+        delta,
+      ),
+      timer: setTimeout(flushWheelScroll, WHEEL_FRAME_MS),
+    };
+  };
+
+  const updateDragFocusToEdge = (dir: -1 | 1) => {
+    const current = dragRef.current;
+    if (!current) return;
+    const edgeRow = dir === -1 ? 0 : innerRows - 1;
+    const edgeCol = dir === -1 ? 0 : Math.max(0, innerCols - 1);
+    const next: AbsSelection = {
+      anchor: current.anchor,
+      focus: {
         lineId: viewportRowToLineId(term, proc.view, innerRows, edgeRow),
         col: edgeCol,
-      };
-      const next: AbsSelection = { anchor: current.anchor, focus };
-      dragRef.current = next;
-      setSelection(next);
+      },
+    };
+    dragRef.current = next;
+    setSelection(next);
+  };
+
+  const applyDragScroll = (dir: -1 | 1, lines: number) => {
+    const id = pm.currentId();
+    if (!id) return;
+    if (dir === -1) pm.scrollUp(id, lines);
+    else pm.scrollDown(id, lines);
+    updateDragFocusToEdge(dir);
+  };
+
+  const driveAutoScroll = (intent: NonNullable<ReturnType<typeof dragScrollIntent>>) => {
+    if (isAlt) return;
+    const s = autoScrollRef.current;
+    const now = Date.now();
+    autoScrollRef.current.lastEventAt = now;
+    if (s.dir === intent.direction && s.lines === intent.lines && s.timer) return;
+    if (s.timer) clearInterval(s.timer);
+    const fire = () => {
+      if (Date.now() - autoScrollRef.current.lastEventAt > DRAG_AUTOSCROLL_STALE_MS) {
+        stopAutoScroll();
+        return;
+      }
+      applyDragScroll(intent.direction, intent.lines);
     };
     autoScrollRef.current = {
-      dir,
-      distance,
-      timer: setInterval(fire, autoScrollInterval(distance)),
+      dir: intent.direction,
+      lines: intent.lines,
+      lastEventAt: now,
+      timer: setInterval(fire, intent.intervalMs),
     };
     fire();
   };
@@ -136,6 +214,7 @@ export function Output() {
     }
     const p = toLocal(ev);
     if (!p) return;
+    resetWheelScroll();
     const pt = pointToAbs(p);
     const sel: AbsSelection = { anchor: pt, focus: pt };
     dragRef.current = sel;
@@ -149,22 +228,24 @@ export function Output() {
     }
     if (!dragRef.current) return;
     const p = toLocal(ev);
-    if (!p) return;
-
-    if (p.row < 0) {
-      driveAutoScroll(-1, -p.row);
-      return;
-    }
-    if (p.row >= innerRows) {
-      driveAutoScroll(1, p.row - innerRows + 1);
+    if (!p) {
+      stopAutoScroll();
       return;
     }
 
-    stopAutoScroll();
-    const focus = pointToAbs(p);
-    const next: AbsSelection = { anchor: dragRef.current.anchor, focus };
+    const next: AbsSelection = {
+      anchor: dragRef.current.anchor,
+      focus: pointToAbs(p),
+    };
     dragRef.current = next;
     setSelection(next);
+
+    const intent = dragScrollIntent(p.row, innerRows);
+    if (intent) {
+      driveAutoScroll(intent);
+      return;
+    }
+    stopAutoScroll();
   };
 
   const onMouseRelease = (ev: MouseEvent) => {
@@ -178,7 +259,21 @@ export function Output() {
     if (!sel) return;
     setSelection(null);
     const text = extractAbsSelectionText(term, sel, innerCols);
-    if (text) Effect.runFork(clipboard.copy(text));
+    if (text) {
+      Effect.runFork(
+        clipboard.copy(text).pipe(
+          Effect.match({
+            onFailure: () => "Copy failed",
+            onSuccess: () => "Copied to clipboard",
+          }),
+          Effect.tap((message) => Effect.sync(() => showToast(message))),
+        ),
+      );
+    }
+  };
+
+  const onMouseOut = () => {
+    stopAutoScroll();
   };
 
   // Wheel routing in interactive mode:
@@ -187,22 +282,24 @@ export function Output() {
   //      Up/Down arrow keys; that's what wezterm/Alacritty/iTerm do and what
   //      vim/less/man/htop expect.
   //   3. Plain stream (no alt-screen, no tracking) → scroll our scrollback.
-  const onInteractiveScroll = (ev: MouseEvent) => {
-    if (!isInteractive) return;
-    if (forwardMouseToPty(ev)) return;
+  const onMouseScroll = (ev: MouseEvent) => {
+    stopAutoScroll();
+    if (isInteractive && forwardMouseToPty(ev)) return;
     const s = ev.scroll;
     if (!s) return;
     const id = pm.currentId();
     if (!id) return;
-    if (isAlt) {
+    const direction = verticalDirection(s.direction);
+    if (!direction) return;
+
+    if (isInteractive && isAlt) {
       const key = s.direction === "down" ? "\x1B[B" : s.direction === "up" ? "\x1B[A" : null;
       if (!key) return;
       const ticks = Math.max(1, s.delta);
       Effect.runFork(pm.write(id, key.repeat(ticks)));
       return;
     }
-    if (s.direction === "down") pm.scrollDown(id, s.delta);
-    else if (s.direction === "up") pm.scrollUp(id, s.delta);
+    queueWheelScroll(direction, s.delta);
   };
 
   return (
@@ -215,8 +312,10 @@ export function Output() {
       onMouseDown={onMouseDown}
       onMouseDrag={onMouseDrag}
       onMouseDragEnd={onMouseRelease}
+      onMouseDrop={onMouseRelease}
+      onMouseOut={onMouseOut}
       onMouseUp={onMouseRelease}
-      onMouseScroll={onInteractiveScroll}
+      onMouseScroll={onMouseScroll}
     >
       {isAlt ? (
         <ScreenView
@@ -233,6 +332,17 @@ export function Output() {
           visibleCols={innerCols}
           selection={selection}
         />
+      )}
+      {toast && (
+        <box
+          position="absolute"
+          bottom={0}
+          right={1}
+          paddingX={1}
+          backgroundColor="#1f2937"
+        >
+          <text fg="#d1fae5">{toast}</text>
+        </box>
       )}
     </box>
   );

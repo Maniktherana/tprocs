@@ -1,7 +1,6 @@
-import { MacOSScrollAccel } from "@opentui/core";
 import { useKeyboard, useOnResize, useTerminalDimensions } from "@opentui/react";
 import { Effect } from "effect";
-import { useEffect, useRef } from "react";
+import { useEffect } from "react";
 import { KeymapBar } from "./keymap-bar";
 import { Output } from "./output";
 import { ProcsList } from "./procs-list";
@@ -44,19 +43,6 @@ export function App() {
     ? `${procTitle} · INTERACT`
     : `${procTitle} · view`;
 
-  const scrollAccelRef = useRef(new MacOSScrollAccel());
-  const onOutputScroll = (e: { scroll?: { direction: string; delta: number } }) => {
-    if (interactive) return;
-    const s = e.scroll;
-    if (!s) return;
-    const id = pm.currentId();
-    if (!id) return;
-    const multiplier = scrollAccelRef.current.tick();
-    const lines = Math.max(1, Math.round(s.delta * multiplier));
-    if (s.direction === "down") pm.scrollDown(id, lines);
-    else if (s.direction === "up") pm.scrollUp(id, lines);
-  };
-
   return (
     <box flexDirection="column" flexGrow={1}>
       <box flexDirection="row" flexGrow={1}>
@@ -76,7 +62,6 @@ export function App() {
           border
           borderColor={interactive ? "#fbbf24" : undefined}
           title={terminalTitle}
-          onMouseScroll={onOutputScroll}
         >
           <Output />
         </box>

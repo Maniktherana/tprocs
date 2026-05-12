@@ -56,6 +56,7 @@ for (const p of parsed.procs) {
       cmd: { shell: p.shell },
       cols: 80,
       rows: 24,
+      scrollbackLimit: parsed.scrollbackLimit,
     }),
   );
 }

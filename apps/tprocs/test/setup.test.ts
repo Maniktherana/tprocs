@@ -67,6 +67,12 @@ describe("libghostty WASM (via in-tree bindings)", () => {
     // is whatever overflowed first into history.
     expect(text).toMatch(/^line \d+$/);
   });
+
+  it("keeps scrollback past the old fixed 10k default", async () => {
+    const term = await createTerm({ cols: 20, rows: 4 });
+    for (let i = 1; i <= 10_080; i++) term.feed(`line ${i}\r\n`);
+    expect(term.scrollbackCount).toBeGreaterThan(10_000);
+  });
 });
 
 const spawnEcho = (script: string) =>
