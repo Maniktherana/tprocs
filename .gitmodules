@@ -1,0 +1,3 @@
+[submodule "packages/ghostty/upstream"]
+	path = packages/ghostty/upstream
+	url = https://github.com/ghostty-org/ghostty.git

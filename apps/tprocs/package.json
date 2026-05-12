@@ -1,0 +1,38 @@
+{
+  "name": "tprocs",
+  "private": true,
+  "type": "module",
+  "module": "src/index.tsx",
+  "scripts": {
+    "dev": "bun run --watch src/index.tsx",
+    "clean": "rm -rf dist",
+    "build": "bun run clean && bun build --compile --minify --sourcemap=external --target=bun --outfile=dist/tprocs src/index.tsx",
+    "build:darwin-arm64": "bun build --compile --minify --sourcemap=external --target=bun-darwin-arm64 --outfile=dist/tprocs-darwin-arm64 src/index.tsx",
+    "build:darwin-x64": "bun build --compile --minify --sourcemap=external --target=bun-darwin-x64 --outfile=dist/tprocs-darwin-x64 src/index.tsx",
+    "build:linux-arm64": "bun build --compile --minify --sourcemap=external --target=bun-linux-arm64 --outfile=dist/tprocs-linux-arm64 src/index.tsx",
+    "build:linux-x64": "bun build --compile --minify --sourcemap=external --target=bun-linux-x64 --outfile=dist/tprocs-linux-x64 src/index.tsx",
+    "build:windows-x64": "bun build --compile --minify --sourcemap=external --target=bun-windows-x64 --outfile=dist/tprocs-windows-x64.exe src/index.tsx",
+    "build:all": "bun run clean && bun run build:darwin-arm64 && bun run build:darwin-x64 && bun run build:linux-arm64 && bun run build:linux-x64 && bun run build:windows-x64",
+    "test": "bun test",
+    "test:watch": "bun test --watch",
+    "typecheck": "tsc --noEmit",
+    "lint": "oxlint",
+    "fmt": "oxfmt",
+    "fmt:check": "oxfmt --check"
+  },
+  "dependencies": {
+    "@opentui/core": "^0.2.1",
+    "@opentui/react": "^0.2.1",
+    "bun-pty": "^0.4.8",
+    "effect": "^3.21.2",
+    "react": "^19.2.4"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "oxfmt": "^0.48.0",
+    "oxlint": "^1.63.0"
+  },
+  "peerDependencies": {
+    "typescript": "^5"
+  }
+}

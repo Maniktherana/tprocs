@@ -1,0 +1,22 @@
+{
+  "$schema": "./node_modules/oxlint/configuration_schema.json",
+  "plugins": ["typescript", "unicorn", "oxc"],
+  "categories": {
+    "correctness": "error",
+    "suspicious": "warn"
+  },
+  "rules": {
+    "no-console": "off",
+    "no-unused-vars": "off",
+    "@typescript-eslint/no-unused-vars": "off"
+  },
+  "env": {
+    "builtin": true
+  },
+  "ignorePatterns": [
+    "src/ghostty/**",
+    "dist/**",
+    "node_modules/**",
+    "**/*.wasm"
+  ]
+}

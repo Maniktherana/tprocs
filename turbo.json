@@ -1,0 +1,23 @@
+{
+  "$schema": "https://turborepo.dev/schema.json",
+  "ui": "tui",
+  "tasks": {
+    "dev": { "cache": false, "persistent": true },
+    "test": { "dependsOn": ["^test"] },
+    "lint": { "dependsOn": ["^lint"] },
+    "fmt": { "cache": false },
+    "fmt:check": { "dependsOn": ["^fmt:check"] },
+    "typecheck": { "dependsOn": ["^typecheck"] },
+    "build": {
+      "dependsOn": ["^build", "typecheck"],
+      "inputs": [
+        "src/**",
+        "tsconfig.json",
+        "package.json",
+        "bunfig.toml"
+      ],
+      "outputs": ["dist/**"]
+    },
+    "clean": { "cache": false }
+  }
+}
