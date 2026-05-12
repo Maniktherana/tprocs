@@ -27,6 +27,29 @@ const run = <A>(eff: Effect.Effect<A, never, ProcessManager>): Promise<A> =>
 
 const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
+const isNoSuchProcess = (err: unknown): err is NodeJS.ErrnoException =>
+  err instanceof Error &&
+  "code" in err &&
+  (err as NodeJS.ErrnoException).code === "ESRCH";
+
+const processExists = (pid: number) => {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (err) {
+    if (isNoSuchProcess(err)) return false;
+    throw err;
+  }
+};
+
+const waitUntil = async (predicate: () => boolean) => {
+  for (const _ of Array.from({ length: 50 })) {
+    if (predicate()) return;
+    await wait(20);
+  }
+  throw new Error("timed out waiting for condition");
+};
+
 const baseSpec = (overrides: Partial<ProcSpec> = {}): ProcSpec => ({
   cmd: { shell: "printf hello" },
   cols: 80,
@@ -79,6 +102,27 @@ describe("ProcessManager", () => {
         yield* Effect.promise(() => state.session!.handle.exit);
         yield* Effect.sleep("20 millis");
         expect(state.status.kind).toBe("exited");
+      }),
+    ));
+
+  it("kill sends a real SIGKILL to the child pid", () =>
+    run(
+      Effect.gen(function* () {
+        const pm = yield* ProcessManager;
+        const id = yield* pm.add(
+          baseSpec({
+            cmd: {
+              shell:
+                "trap '' TERM HUP INT QUIT; printf ready; while :; do read -t 1 _ || true; done",
+            },
+          }),
+        );
+        yield* Effect.promise(() => wait(100));
+        const state = pm.get(id)!;
+        const pid = state.session!.handle.pid;
+        expect(processExists(pid)).toBe(true);
+        yield* pm.kill(id);
+        yield* Effect.promise(() => waitUntil(() => !processExists(pid)));
       }),
     ));
 

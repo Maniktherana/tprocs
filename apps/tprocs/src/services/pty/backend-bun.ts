@@ -5,8 +5,34 @@ import type {
   PtyExit,
   PtyHandle,
   PtySize,
+  PtySignal,
   PtySpec,
 } from "./backend";
+
+const isNoSuchProcess = (err: unknown): err is NodeJS.ErrnoException =>
+  err instanceof Error &&
+  "code" in err &&
+  (err as NodeJS.ErrnoException).code === "ESRCH";
+
+const signalPid = (pid: number, sig: PtySignal): void => {
+  try {
+    process.kill(pid, sig);
+  } catch (err) {
+    if (isNoSuchProcess(err)) return;
+    throw err;
+  }
+};
+
+const signalPty = (
+  pty: ReturnType<typeof bunSpawn>,
+  sig: PtySignal,
+): void => {
+  if (process.platform === "win32") {
+    pty.kill(sig);
+    return;
+  }
+  signalPid(pty.pid, sig);
+};
 
 const spawnImpl = (
   spec: PtySpec,
@@ -23,7 +49,11 @@ const spawnImpl = (
           env: spec.env ?? (process.env as Record<string, string>),
         }),
       ),
-      (p) => Effect.sync(() => p.kill("SIGTERM")),
+      (p) =>
+        Effect.sync(() => {
+          signalPty(p, "SIGTERM");
+          p.kill("SIGTERM");
+        }),
     );
 
     return {
@@ -35,11 +65,11 @@ const spawnImpl = (
       exit: new Promise<PtyExit>((resolve) => pty.onExit(resolve)),
       write: (d) => Effect.sync(() => pty.write(d)),
       resize: (c, r) => Effect.sync(() => pty.resize(c, r)),
-      signal: (sig) => Effect.sync(() => pty.kill(sig)),
+      signal: (sig) => Effect.sync(() => signalPty(pty, sig)),
     };
   });
 
 export const PtyBackendBun: PtyBackend = {
-  supportsSignals: true,
+  supportsSignals: process.platform !== "win32",
   spawn: spawnImpl,
 };
