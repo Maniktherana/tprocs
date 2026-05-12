@@ -7,6 +7,8 @@
     "dev": "bun run --watch src/index.tsx",
     "clean": "rm -rf dist",
     "build": "bun run clean && bun build --compile --minify --sourcemap=external --target=bun --outfile=dist/tprocs src/index.tsx",
+    "install:local": "bun run build && mkdir -p \"$HOME/.local/bin\" && ln -sf \"$PWD/dist/tprocs\" \"$HOME/.local/bin/tprocs\" && echo \"installed: $HOME/.local/bin/tprocs -> $PWD/dist/tprocs\" && (echo $PATH | tr : '\\n' | grep -qx \"$HOME/.local/bin\" || echo \"warning: $HOME/.local/bin is not on PATH. add this to your shell rc: export PATH=\\\"$HOME/.local/bin:$PATH\\\"\")",
+    "uninstall:local": "rm -f \"$HOME/.local/bin/tprocs\" && echo \"removed: $HOME/.local/bin/tprocs\"",
     "build:darwin-arm64": "bun build --compile --minify --sourcemap=external --target=bun-darwin-arm64 --outfile=dist/tprocs-darwin-arm64 src/index.tsx",
     "build:darwin-x64": "bun build --compile --minify --sourcemap=external --target=bun-darwin-x64 --outfile=dist/tprocs-darwin-x64 src/index.tsx",
     "build:linux-arm64": "bun build --compile --minify --sourcemap=external --target=bun-linux-arm64 --outfile=dist/tprocs-linux-arm64 src/index.tsx",
