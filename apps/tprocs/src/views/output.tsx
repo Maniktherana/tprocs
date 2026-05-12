@@ -10,10 +10,9 @@ import {
 import { encodeSgrMouse } from "./mouse-encode";
 import {
   DRAG_AUTOSCROLL_STALE_MS,
-  WHEEL_FRAME_MS,
   dragScrollIntent,
-  queueWheelLines,
   verticalDirection,
+  wheelLines,
   type VerticalDirection,
 } from "./output-scroll";
 import { ScreenView } from "./screen-view";
@@ -38,11 +37,6 @@ export function Output() {
   const [toast, setToast] = useState<string | null>(null);
   const dragRef = useRef<AbsSelection | null>(null);
   const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const wheelRef = useRef<{
-    direction: VerticalDirection | null;
-    pending: number;
-    timer: ReturnType<typeof setTimeout> | null;
-  }>({ direction: null, pending: 0, timer: null });
   const autoScrollRef = useRef<{
     dir: -1 | 0 | 1;
     lines: number;
@@ -53,7 +47,6 @@ export function Output() {
   useEffect(() => {
     return () => {
       if (autoScrollRef.current.timer) clearInterval(autoScrollRef.current.timer);
-      if (wheelRef.current.timer) clearTimeout(wheelRef.current.timer);
       if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
     };
   }, []);
@@ -78,12 +71,6 @@ export function Output() {
     };
   };
 
-  const resetWheelScroll = () => {
-    const s = wheelRef.current;
-    if (s.timer) clearTimeout(s.timer);
-    wheelRef.current = { direction: null, pending: 0, timer: null };
-  };
-
   const showToast = (message: string) => {
     if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
     setToast(message);
@@ -95,7 +82,6 @@ export function Output() {
 
   useEffect(() => {
     stopAutoScroll();
-    resetWheelScroll();
     dragRef.current = null;
     setSelection(null);
   }, [proc?.id, isInteractive]);
@@ -122,26 +108,6 @@ export function Output() {
     if (!id) return;
     if (direction === "up") pm.scrollUp(id, lines);
     else pm.scrollDown(id, lines);
-  };
-
-  const flushWheelScroll = () => {
-    const { direction, pending } = wheelRef.current;
-    wheelRef.current = { direction: null, pending: 0, timer: null };
-    if (!direction || pending < 1) return;
-    scrollByDirection(direction, pending);
-  };
-
-  const queueWheelScroll = (direction: VerticalDirection, delta: number) => {
-    const current = wheelRef.current;
-    if (current.timer) clearTimeout(current.timer);
-    wheelRef.current = {
-      direction,
-      pending: queueWheelLines(
-        current.direction === direction ? current.pending : 0,
-        delta,
-      ),
-      timer: setTimeout(flushWheelScroll, WHEEL_FRAME_MS),
-    };
   };
 
   const updateDragFocusToEdge = (dir: -1 | 1) => {
@@ -214,7 +180,6 @@ export function Output() {
     }
     const p = toLocal(ev);
     if (!p) return;
-    resetWheelScroll();
     const pt = pointToAbs(p);
     const sel: AbsSelection = { anchor: pt, focus: pt };
     dragRef.current = sel;
@@ -299,7 +264,7 @@ export function Output() {
       Effect.runFork(pm.write(id, key.repeat(ticks)));
       return;
     }
-    queueWheelScroll(direction, s.delta);
+    scrollByDirection(direction, wheelLines(s.delta));
   };
 
   return (

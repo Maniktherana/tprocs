@@ -6,8 +6,7 @@ export type DragScrollIntent = {
   readonly intervalMs: number;
 };
 
-export const WHEEL_FRAME_MS = 24;
-export const MAX_WHEEL_LINES_PER_FRAME = 3;
+export const WHEEL_LINES_PER_TICK = 3;
 export const DRAG_AUTOSCROLL_STALE_MS = 180;
 
 const DRAG_AUTOSCROLL_INTERVAL_MS = 50;
@@ -16,11 +15,8 @@ const DRAG_AUTOSCROLL_FAST_DISTANCE = 4;
 export const verticalDirection = (direction: string): VerticalDirection | null =>
   direction === "up" || direction === "down" ? direction : null;
 
-export const queueWheelLines = (pending: number, delta: number): number =>
-  Math.min(
-    MAX_WHEEL_LINES_PER_FRAME,
-    pending + Math.max(1, Math.floor(delta)),
-  );
+export const wheelLines = (delta: number): number =>
+  Math.max(1, Math.floor(delta)) * WHEEL_LINES_PER_TICK;
 
 export const dragScrollIntent = (
   row: number,

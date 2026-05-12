@@ -1,9 +1,9 @@
 import { describe, expect, it } from "bun:test";
 import {
-  MAX_WHEEL_LINES_PER_FRAME,
   dragScrollIntent,
-  queueWheelLines,
   verticalDirection,
+  wheelLines,
+  WHEEL_LINES_PER_TICK,
 } from "../src/views/output-scroll";
 
 describe("output scroll policy", () => {
@@ -13,12 +13,9 @@ describe("output scroll policy", () => {
     expect(verticalDirection("left")).toBeNull();
   });
 
-  it("caps wheel bursts to a predictable per-frame step", () => {
-    expect(queueWheelLines(0, 1)).toBe(1);
-    expect(queueWheelLines(2, 1)).toBe(MAX_WHEEL_LINES_PER_FRAME);
-    expect(queueWheelLines(MAX_WHEEL_LINES_PER_FRAME, 1)).toBe(
-      MAX_WHEEL_LINES_PER_FRAME,
-    );
+  it("maps each wheel tick to a fixed scroll speed without acceleration", () => {
+    expect(wheelLines(1)).toBe(WHEEL_LINES_PER_TICK);
+    expect(wheelLines(2)).toBe(WHEEL_LINES_PER_TICK * 2);
   });
 
   it("uses small fixed drag autoscroll tiers at the pane edges", () => {
