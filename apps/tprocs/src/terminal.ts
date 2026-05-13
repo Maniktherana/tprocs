@@ -81,6 +81,7 @@ type ViewportCache = readonly (readonly Cell[])[] | null;
 export class Terminal {
   private viewportCache: ViewportCache = null;
   private scrollbackCache = new Map<number, readonly Cell[]>();
+  private disposed = false;
 
   private constructor(private readonly core: GhosttyTerminal) {}
 
@@ -96,12 +97,21 @@ export class Terminal {
     this.scrollbackCache.clear();
   }
 
+  dispose(): void {
+    if (this.disposed) return;
+    this.disposed = true;
+    this.invalidate();
+    this.core.free();
+  }
+
   feed(data: string | Uint8Array): void {
+    if (this.disposed) return;
     this.core.write(data);
     this.invalidate();
   }
 
   resize(cols: number, rows: number): void {
+    if (this.disposed) return;
     this.core.resize(cols, rows);
     this.invalidate();
   }

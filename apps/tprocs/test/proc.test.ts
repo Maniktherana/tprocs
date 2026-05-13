@@ -16,6 +16,31 @@ const withProc = (config: ProcConfig, use: (proc: ProcHandle) => Promise<void>):
     ),
   );
 
+const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+const isNoSuchProcess = (err: unknown): err is NodeJS.ErrnoException =>
+  err instanceof Error &&
+  "code" in err &&
+  (err as NodeJS.ErrnoException).code === "ESRCH";
+
+const processExists = (pid: number) => {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (err) {
+    if (isNoSuchProcess(err)) return false;
+    throw err;
+  }
+};
+
+const waitUntil = async (predicate: () => boolean) => {
+  for (const _ of Array.from({ length: 80 })) {
+    if (predicate()) return;
+    await wait(20);
+  }
+  throw new Error("timed out waiting for condition");
+};
+
 describe("startProc", () => {
   it("spawns a shell command and writes its output into the terminal grid", () =>
     withProc(
@@ -64,7 +89,28 @@ describe("startProc", () => {
       }).pipe(Scope.extend(scope), Effect.provide(procDeps)),
     );
     await new Promise((r) => setTimeout(r, 100));
+    expect(processExists(proc.pty.pid)).toBe(true);
     await Effect.runPromise(Scope.close(scope, Exit.void));
-    expect((await proc.exit).signal).toBe("SIGTERM");
+    await waitUntil(() => !processExists(proc.pty.pid));
+  });
+
+  it("scope close escalates when the child ignores SIGTERM", async () => {
+    const scope = await Effect.runPromise(Scope.make());
+    const proc = await Effect.runPromise(
+      startProc({
+        id: "stubborn",
+        name: "stubborn",
+        cmd: {
+          shell:
+            "trap '' TERM HUP INT QUIT; printf ready; while :; do sleep 1; done",
+        },
+        cols: 80,
+        rows: 24,
+      }).pipe(Scope.extend(scope), Effect.provide(procDeps)),
+    );
+    await wait(100);
+    expect(processExists(proc.pty.pid)).toBe(true);
+    await Effect.runPromise(Scope.close(scope, Exit.void));
+    await waitUntil(() => !processExists(proc.pty.pid));
   });
 });

@@ -1,5 +1,10 @@
 import { Effect, Scope, Stream } from "effect";
-import { Pty, type PtyExit, type PtyHandle } from "./services/pty/service";
+import {
+  Pty,
+  type PtyExit,
+  type PtyHandle,
+  type PtySpawnError,
+} from "./services/pty/service";
 import { TerminalEngine } from "./services/terminal-engine";
 import { Terminal } from "./terminal";
 
@@ -33,15 +38,20 @@ const argvOf = (cmd: CmdSpec): { file: string; args: readonly string[] } =>
 
 export const startProc = (
   config: ProcConfig,
-): Effect.Effect<ProcHandle, never, Scope.Scope | Pty | TerminalEngine> =>
+): Effect.Effect<ProcHandle, PtySpawnError, Scope.Scope | Pty | TerminalEngine> =>
   Effect.gen(function* () {
     const pty = yield* Pty;
     const engine = yield* TerminalEngine;
-    const term = Terminal.create(engine.ghostty, {
-      cols: config.cols,
-      rows: config.rows,
-      scrollbackLimit: config.scrollbackLimit,
-    });
+    const term = yield* Effect.acquireRelease(
+      Effect.sync(() =>
+        Terminal.create(engine.ghostty, {
+          cols: config.cols,
+          rows: config.rows,
+          scrollbackLimit: config.scrollbackLimit,
+        }),
+      ),
+      (terminal) => Effect.sync(() => terminal.dispose()),
+    );
     const { file, args } = argvOf(config.cmd);
     const handle = yield* pty.spawn(
       { file, args, cwd: config.cwd, env: config.env },

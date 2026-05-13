@@ -25,6 +25,7 @@ export const TerminalStateLive = Layer.scoped(
     const terminals = new Map<ProcId, Terminal>();
     yield* Effect.addFinalizer(() =>
       Effect.sync(() => {
+        for (const term of terminals.values()) term.dispose();
         terminals.clear();
       }),
     );
@@ -37,8 +38,9 @@ export const TerminalStateLive = Layer.scoped(
             terminals.set(procId, term);
             return term;
           }),
-          () =>
+          (term) =>
             Effect.sync(() => {
+              term.dispose();
               terminals.delete(procId);
             }),
         ),

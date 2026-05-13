@@ -5,9 +5,14 @@ import {
   ProcessManagerLive,
   type ProcSpec,
 } from "../src/services/process-manager";
-import { PtyLive } from "../src/services/pty/service";
+import {
+  Pty,
+  PtyLive,
+  PtySpawnError,
+  type PtyBackend,
+} from "../src/services/pty/service";
 import { TerminalEngineLive } from "../src/services/terminal-engine";
-import { TerminalStateLive } from "../src/services/terminal-state";
+import { TerminalState, TerminalStateLive } from "../src/services/terminal-state";
 
 const TerminalStateProvided = TerminalStateLive.pipe(
   Layer.provide(TerminalEngineLive),
@@ -86,6 +91,36 @@ describe("ProcessManager", () => {
         expect(pm.get(id)!.status.kind).toBe("running");
       }),
     ));
+
+  it("marks the proc failed and detaches its terminal when spawn fails", () => {
+    const failingPty = Layer.succeed(Pty, {
+      supportsSignals: true,
+      spawn: (spec) =>
+        Effect.fail(new PtySpawnError(spec, new Error("spawn failed"))),
+    } satisfies PtyBackend);
+    const failingLayers = Layer.mergeAll(
+      failingPty,
+      TerminalStateProvided,
+      ProcessManagerLive.pipe(
+        Layer.provide(failingPty),
+        Layer.provide(TerminalStateProvided),
+      ),
+    );
+
+    return Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const pm = yield* ProcessManager;
+          const terminals = yield* TerminalState;
+          const id = yield* pm.add(baseSpec({ name: "bad" }));
+
+          expect(pm.get(id)?.status.kind).toBe("failed");
+          expect(pm.get(id)?.session).toBeUndefined();
+          expect(terminals.get(id)).toBeUndefined();
+        }).pipe(Effect.provide(failingLayers)),
+      ),
+    );
+  });
 
   it("stop sends SIGTERM and the proc transitions to exited", () =>
     run(

@@ -6,6 +6,8 @@ export class Pty extends Context.Tag("Pty")<Pty, PtyBackend>() {}
 
 export const PtyLive = Layer.succeed(Pty, PtyBackendBun);
 
+export { PtySpawnError } from "./backend";
+
 export type {
   PtyBackend,
   PtyExit,

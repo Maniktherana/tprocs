@@ -1,4 +1,4 @@
-import { Context, Effect, Exit, Layer, Scope, Stream } from "effect";
+import { Context, Effect, Either, Exit, Layer, Scope, Stream } from "effect";
 import type { PtyHandle } from "./pty/service";
 import { Pty } from "./pty/service";
 import { TerminalState } from "./terminal-state";
@@ -25,6 +25,7 @@ export type ProcStatus =
   | { readonly kind: "idle" }
   | { readonly kind: "running"; readonly pid: number; readonly startedAt: number }
   | { readonly kind: "paused"; readonly pid: number; readonly startedAt: number }
+  | { readonly kind: "failed"; readonly message: string }
   | {
       readonly kind: "exited";
       readonly exitCode: number;
@@ -138,9 +139,7 @@ export const ProcessManagerLive = Layer.scoped(
 
         yield* closeSession(state);
 
-        const newScope = yield* Scope.fork(outerScope, "sequential" as never).pipe(
-          Effect.catchAll(() => Scope.make()),
-        );
+        const newScope = yield* Scope.fork(outerScope, "sequential" as never);
 
         const term = yield* terminalState
           .attach(id, {
@@ -151,13 +150,21 @@ export const ProcessManagerLive = Layer.scoped(
           .pipe(Scope.extend(newScope));
 
         const { file, args } = argvOf(state.cmd);
-        const handle = yield* pty
+        const handleResult = yield* pty
           .spawn(
             { file, args, cwd: state.cwd, env: state.env },
             { cols: state.cols, rows: state.rows },
           )
-          .pipe(Scope.extend(newScope));
+          .pipe(Scope.extend(newScope), Effect.either);
 
+        if (Either.isLeft(handleResult)) {
+          yield* Scope.close(newScope, Exit.fail(handleResult.left));
+          state.status = { kind: "failed", message: handleResult.left.message };
+          notify();
+          return;
+        }
+
+        const handle = handleResult.right;
         const startedAt = Date.now();
         state.session = { scope: newScope, terminal: term, handle };
         state.status = { kind: "running", pid: handle.pid, startedAt };
@@ -168,6 +175,7 @@ export const ProcessManagerLive = Layer.scoped(
         yield* Effect.forkIn(
           Stream.runForEach(handle.data, (d) =>
             Effect.sync(() => {
+              if (state.session?.handle !== handle) return;
               const before = term.scrollbackCount;
               term.feed(d);
               // When the user has scrolled up, keep their absolute view
@@ -182,7 +190,7 @@ export const ProcessManagerLive = Layer.scoped(
               notify();
             }),
           ),
-          outerScope,
+          newScope,
         );
 
         // Watch for exit and update status.
@@ -190,6 +198,7 @@ export const ProcessManagerLive = Layer.scoped(
           Effect.promise(() => handle.exit).pipe(
             Effect.tap((exit) =>
               Effect.sync(() => {
+                if (state.session?.handle !== handle) return;
                 state.status = {
                   kind: "exited",
                   exitCode: exit.exitCode,
@@ -200,7 +209,7 @@ export const ProcessManagerLive = Layer.scoped(
               }),
             ),
           ),
-          outerScope,
+          newScope,
         );
       });
 

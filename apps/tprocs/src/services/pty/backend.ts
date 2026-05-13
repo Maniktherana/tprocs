@@ -29,10 +29,21 @@ export type PtyHandle = {
   readonly signal: (sig: PtySignal) => Effect.Effect<void>;
 };
 
+export class PtySpawnError extends Error {
+  readonly _tag = "PtySpawnError";
+  override readonly cause: unknown;
+
+  constructor(readonly spec: PtySpec, cause: unknown) {
+    super(`Failed to spawn PTY process: ${spec.file}`);
+    this.name = "PtySpawnError";
+    this.cause = cause;
+  }
+}
+
 export interface PtyBackend {
   readonly supportsSignals: boolean;
   readonly spawn: (
     spec: PtySpec,
     size: PtySize,
-  ) => Effect.Effect<PtyHandle, never, Scope.Scope>;
+  ) => Effect.Effect<PtyHandle, PtySpawnError, Scope.Scope>;
 }
