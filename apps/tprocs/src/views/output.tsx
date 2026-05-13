@@ -18,6 +18,7 @@ import { Toast } from "./components/toast";
 import { ScreenView } from "./screen-view";
 import { useRenderTick, useServices } from "./services-context";
 import { StreamView } from "./stream-view";
+import { theme } from "./theme";
 
 type Point = { row: number; col: number };
 
@@ -97,6 +98,9 @@ export function Output() {
 
   const term = proc.session.terminal;
   const isAlt = term.usingAltScreen;
+  const scrollbackMarker = !isAlt && proc.view.viewOffset > 0
+    ? `-${proc.view.viewOffset}`
+    : null;
 
   const pointToAbs = (p: Point): AbsPoint => {
     const row = clamp(p.row, 0, Math.max(0, innerRows - 1));
@@ -311,6 +315,17 @@ export function Output() {
           visibleCols={innerCols}
           selection={selection}
         />
+      )}
+      {scrollbackMarker && (
+        <box
+          position="absolute"
+          top={0}
+          right={0}
+          paddingX={1}
+          backgroundColor={theme.yellow}
+        >
+          <text fg={theme.bg}>{scrollbackMarker}</text>
+        </box>
       )}
       {toast && <Toast message={toast} />}
     </box>

@@ -1,8 +1,18 @@
 import { Context, Effect, Either, Exit, Layer, Scope, Stream } from "effect";
 import type { PtyHandle } from "./pty/service";
 import { Pty } from "./pty/service";
+import {
+  anchorViewAfterAppend,
+  initialProcView,
+  scrollViewDown,
+  scrollViewToTail,
+  scrollViewUp,
+  type ProcView,
+} from "./proc-view-state";
 import { TerminalState } from "./terminal-state";
 import type { Terminal } from "../terminal";
+
+export type { ProcView } from "./proc-view-state";
 
 export type ProcId = string;
 
@@ -36,13 +46,6 @@ type Session = {
   scope: Scope.CloseableScope;
   terminal: Terminal;
   handle: PtyHandle;
-};
-
-export type ProcView = {
-  /** Lines above the tail (0 = at bottom). */
-  viewOffset: number;
-  /** When true, new output keeps the view pinned to the bottom. */
-  followTail: boolean;
 };
 
 export type ProcState = {
@@ -178,15 +181,11 @@ export const ProcessManagerLive = Layer.scoped(
               if (state.session?.handle !== handle) return;
               const before = term.scrollbackCount;
               term.feed(d);
-              // When the user has scrolled up, keep their absolute view
-              // anchored by advancing the offset by however many lines just
-              // entered scrollback. When following tail, offset stays at 0.
-              const delta = term.scrollbackCount - before;
-              if (delta > 0 && !state.view.followTail)
-                state.view.viewOffset = Math.min(
-                  state.view.viewOffset + delta,
-                  term.scrollbackCount,
-                );
+              state.view = anchorViewAfterAppend(
+                state.view,
+                term.scrollbackCount - before,
+                term.scrollbackCount,
+              );
               notify();
             }),
           ),
@@ -308,7 +307,7 @@ export const ProcessManagerLive = Layer.scoped(
           rows: spec.rows,
           scrollbackLimit: spec.scrollbackLimit,
           status: { kind: "idle" },
-          view: { viewOffset: 0, followTail: true },
+          view: initialProcView(),
         };
         procs.set(id, state);
         order.push(id);
@@ -342,25 +341,21 @@ export const ProcessManagerLive = Layer.scoped(
     const scrollUp = (id: ProcId, lines: number) => {
       const s = procs.get(id);
       if (!s?.session) return;
-      const max = s.session.terminal.scrollbackCount;
-      s.view.viewOffset = Math.min(s.view.viewOffset + lines, max);
-      s.view.followTail = false;
+      s.view = scrollViewUp(s.view, lines, s.session.terminal.scrollbackCount);
       notify();
     };
 
     const scrollDown = (id: ProcId, lines: number) => {
       const s = procs.get(id);
       if (!s?.session) return;
-      s.view.viewOffset = Math.max(s.view.viewOffset - lines, 0);
-      if (s.view.viewOffset === 0) s.view.followTail = true;
+      s.view = scrollViewDown(s.view, lines);
       notify();
     };
 
     const scrollToTail = (id: ProcId) => {
       const s = procs.get(id);
       if (!s) return;
-      s.view.viewOffset = 0;
-      s.view.followTail = true;
+      s.view = scrollViewToTail();
       notify();
     };
 

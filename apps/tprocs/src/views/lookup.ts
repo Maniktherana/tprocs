@@ -1,4 +1,4 @@
-import type { ProcView } from "../services/process-manager";
+import { topLineId, type ProcView } from "../services/proc-view-state";
 import type { Cell, Terminal } from "../terminal";
 
 // A `lineId` is "absolute row from the top of all currently-held content"
@@ -19,9 +19,7 @@ export const viewportRowToLineId = (
   row: number,
 ): number => {
   const sb = term.scrollbackCount;
-  const total = sb + term.rows;
-  const top = Math.max(0, total - visibleRows - view.viewOffset);
-  return top + row;
+  return topLineId(view, sb + term.rows, visibleRows) + row;
 };
 
 const lineCellsByLineId = (term: Terminal, lineId: number): readonly Cell[] => {

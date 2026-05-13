@@ -1,5 +1,5 @@
 import type { TextChunk } from "@opentui/core";
-import type { ProcView } from "../services/process-manager";
+import { topLineId, type ProcView } from "../services/proc-view-state";
 import type { Cell, Terminal } from "../terminal";
 import { highlightRangeForLineId, type AbsSelection } from "./lookup";
 import { chunksForLine, styledTextOfLines } from "./styled-line";
@@ -20,7 +20,7 @@ const sliceCols = (cells: readonly Cell[], cols: number): readonly Cell[] =>
 export function StreamView({ term, view, visibleRows, visibleCols, selection }: Props) {
   const sb = term.scrollbackCount;
   const total = sb + term.rows;
-  const top = Math.max(0, total - visibleRows - view.viewOffset);
+  const top = topLineId(view, total, visibleRows);
   const grid = term.viewport();
 
   const lines: TextChunk[][] = Array.from({ length: visibleRows });
