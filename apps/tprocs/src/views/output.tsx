@@ -1,4 +1,4 @@
-import type { BoxRenderable, MouseEvent } from "@opentui/core";
+import { RGBA, type BoxRenderable, type MouseEvent } from "@opentui/core";
 import { Effect } from "effect";
 import { useEffect, useRef, useState } from "react";
 import {
@@ -18,7 +18,6 @@ import { Toast } from "./components/toast";
 import { ScreenView } from "./screen-view";
 import { useRenderTick, useServices } from "./services-context";
 import { StreamView } from "./stream-view";
-import { theme } from "./theme";
 
 type Point = { row: number; col: number };
 
@@ -26,6 +25,8 @@ const clamp = (n: number, lo: number, hi: number): number =>
   n < lo ? lo : n > hi ? hi : n;
 
 const TOAST_MS = 1200;
+const SCROLLBACK_MARKER_FG = RGBA.fromIndex(0);
+const SCROLLBACK_MARKER_BG = RGBA.fromIndex(11);
 
 export function Output() {
   useRenderTick();
@@ -99,7 +100,7 @@ export function Output() {
   const term = proc.session.terminal;
   const isAlt = term.usingAltScreen;
   const scrollbackMarker = !isAlt && proc.view.viewOffset > 0
-    ? `-${proc.view.viewOffset}`
+    ? ` -${proc.view.viewOffset} `
     : null;
 
   const pointToAbs = (p: Point): AbsPoint => {
@@ -321,10 +322,15 @@ export function Output() {
           position="absolute"
           top={0}
           right={0}
-          paddingX={1}
-          backgroundColor={theme.yellow}
+          backgroundColor={SCROLLBACK_MARKER_BG}
         >
-          <text fg={theme.bg}>{scrollbackMarker}</text>
+          <text
+            selectable={false}
+            fg={SCROLLBACK_MARKER_FG}
+            bg={SCROLLBACK_MARKER_BG}
+          >
+            {scrollbackMarker}
+          </text>
         </box>
       )}
       {toast && <Toast message={toast} />}

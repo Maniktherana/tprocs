@@ -51,12 +51,10 @@ const toRgbaBg = (c: CellColor): RGBA | null => {
   return rgbToRgba(c.value);
 };
 
-// Drag-selection highlight uses ANSI palette slots so it adapts to the host
-// terminal's theme: ANSI 8 ("bright black") is a mid-gray on dark themes and a
-// dim gray on light ones — i.e. always a contrasting band over the underlying
-// text without us guessing the bg.
-const HIGHLIGHT_BG = RGBA.fromIndex(8);
-const HIGHLIGHT_FG = RGBA.fromIndex(15);
+// Match mprocs selection rendering: selected cells become plain
+// black-on-cyan, with the original cell attributes cleared below.
+const HIGHLIGHT_BG = RGBA.fromIndex(6);
+const HIGHLIGHT_FG = RGBA.fromIndex(0);
 
 /**
  * Collapse a row of cells into a chunk array. Highlighted cells (drag-select)
@@ -93,7 +91,7 @@ export const chunksForLine = (
     let text = "";
     for (let j = runStart; j < i; j++) text += cellChar(effective[j]!.char);
     const highlighted = isHighlighted(runStart);
-    const attrs = flagsToAttributes(sample.flags);
+    const attrs = highlighted ? 0 : flagsToAttributes(sample.flags);
     const fg = highlighted ? HIGHLIGHT_FG : toRgbaFg(sample.fg);
     const bg = highlighted ? HIGHLIGHT_BG : toRgbaBg(sample.bg);
     chunks.push({

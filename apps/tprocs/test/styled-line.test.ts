@@ -89,19 +89,19 @@ describe("chunksForLine", () => {
     expect(chunks[0]!.bg).toBeUndefined();
     expect(chunks[1]!.bg).toBeDefined();
     expect(chunks[1]!.bg!.intent).toBe("indexed");
-    expect(chunks[1]!.bg!.slot).toBe(8);
+    expect(chunks[1]!.bg!.slot).toBe(6);
     expect(chunks[1]!.fg!.intent).toBe("indexed");
-    expect(chunks[1]!.fg!.slot).toBe(15);
+    expect(chunks[1]!.fg!.slot).toBe(0);
     expect(chunks[2]!.bg).toBeUndefined();
   });
 
-  it("preserves the cell's own attribute flags inside the highlight range", () => {
+  it("clears the cell's own attribute flags inside the highlight range", () => {
     const chunks = chunksForLine(
       [cell({ char: 65, flags: CellFlags.BOLD })],
       { start: 0, end: 1 },
     );
-    expect(chunks[0]!.attributes).toBe(TextAttributes.BOLD);
-    expect(chunks[0]!.bg!.slot).toBe(8);
+    expect(chunks[0]!.attributes).toBeUndefined();
+    expect(chunks[0]!.bg!.slot).toBe(6);
   });
 
   it("pads with blank cells when the highlight runs past end-of-line", () => {
@@ -110,6 +110,6 @@ describe("chunksForLine", () => {
       { start: 0, end: 5 },
     );
     expect(chunks.map((c) => c.text).join("")).toBe("AB   ");
-    expect(chunks.every((c) => c.bg?.slot === 8)).toBe(true);
+    expect(chunks.every((c) => c.bg?.slot === 6)).toBe(true);
   });
 });
